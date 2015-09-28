@@ -280,8 +280,8 @@ class SeqOptimizer(Optimizer, list):
         print((" time %.3fs for %d/%d nodes"
                " before/after optimization" % (
                    sum(prof), nb_node_before, nb_node_after)), file=stream)
-        print(blanc, "  %.3fs for fgraph.validate()" % (validate_time), file=stream)
         print(blanc, "  %.3fs for callback" % (callback_time), file=stream)
+        print(blanc, "      %.3fs for fgraph.validate()" % (validate_time), file=stream)
         if level == 0:
             print(blanc, "  time      - (name, class, index) - validate time", file=stream)
         ll = []
@@ -579,6 +579,7 @@ class MergeFeature(object):
         if node.inputs:
             assert len(node.inputs[0].clients) > 0
             assert (node, 0) in node.inputs[0].clients
+
             merge_candidates = [c for (c, i) in node.inputs[0].clients
                                 if c in self.nodes_seen]
 
@@ -809,6 +810,17 @@ class MergeOptimizer(Optimizer):
                     # No need to compare the op again, as it don't change.
                     if not inputs_match:
                         continue
+
+                    if hasattr(pairs[0][0].fgraph, 'destroy_handler'):
+                        # If both nodes have clients that destroy
+                        # them, we can't merge them.
+                        clients = pairs[0][0].clients + pairs[0][1].clients
+                        if sum([i in utils.flatten(c.op.destroy_map.values())
+                                for c, i in clients
+                                if c != 'output' and
+                                hasattr(c.op, 'destroy_map')]) > 1:
+                            continue
+
                 try:
                     fgraph.replace_all_validate(pairs, 'MergeOptimizer')
                 except InconsistencyError:

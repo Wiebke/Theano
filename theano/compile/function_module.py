@@ -159,10 +159,22 @@ def std_fgraph(input_specs, output_specs, accept_inplace=False):
 
     """
     orig_inputs = [spec.variable for spec in input_specs]
-    updates = [spec.update for spec in input_specs if spec.update]
+
+    # Extract the updates and the mapping between update outputs and
+    # the updated inputs.
+    updates = []
+    update_mapping = {}
+    out_idx = len(output_specs)
+    for inp_idx in range(len(input_specs)):
+        if input_specs[inp_idx].update:
+            updates.append(input_specs[inp_idx].update)
+            update_mapping[out_idx] = inp_idx
+            out_idx += 1
+
     orig_outputs = [spec.variable for spec in output_specs] + updates
 
-    fgraph = gof.fg.FunctionGraph(orig_inputs, orig_outputs)
+    fgraph = gof.fg.FunctionGraph(orig_inputs, orig_outputs,
+                                  update_mapping=update_mapping)
 
     for node in fgraph.apply_nodes:
         if getattr(node.op, 'destroy_map', None):
@@ -843,19 +855,13 @@ class Function(object):
                 # this is a new vm-provided function or c linker
                 # they need this because the exception manipulation
                 # done by raise_with_op is not implemented in C.
+                thunk = None
                 if hasattr(self.fn, 'thunks'):
-                    # For the CVM
-                    gof.link.raise_with_op(
-                        self.fn.nodes[self.fn.position_of_error],
-                        self.fn.thunks[self.fn.position_of_error],
-                        storage_map=self.fn.storage_map)
-                else:
-                    # For the c linker We don't have access from
-                    # python to all the temps values So for now, we
-                    # just don't print the extra shapes/strides info
-                    gof.link.raise_with_op(
-                        self.fn.nodes[self.fn.position_of_error],
-                        storage_map=self.fn.storage_map)
+                    thunk = self.fn.thunks[self.fn.position_of_error]
+                gof.link.raise_with_op(
+                    node=self.fn.nodes[self.fn.position_of_error],
+                    thunk=thunk,
+                    storage_map=getattr(self.fn, 'storage_map', None))
             else:
                 # old-style linkers raise their own exceptions
                 raise

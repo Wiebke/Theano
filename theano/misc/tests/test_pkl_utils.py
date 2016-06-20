@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import os
 import shutil
 import unittest
@@ -13,7 +14,7 @@ import theano.sandbox.cuda as cuda_ndarray
 from theano.sandbox.cuda.type import CudaNdarrayType
 from theano.sandbox.cuda.var import CudaNdarraySharedVariable
 from theano.sandbox.rng_mrg import MRG_RandomStreams
-from theano.misc.pkl_utils import dump, load
+from theano.misc.pkl_utils import dump, load, StripPickler
 
 
 class T_dump_load(unittest.TestCase):
@@ -69,3 +70,25 @@ class T_dump_load(unittest.TestCase):
         with open('model.zip', 'rb') as f:
             foo_1, foo_2, foo_3, array = load(f)
         assert array == numpy.array(3)
+
+
+class TestStripPickler(unittest.TestCase):
+    def setUp(self):
+        # Work in a temporary directory to avoid cluttering the repository
+        self.origdir = os.getcwd()
+        self.tmpdir = mkdtemp()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        # Get back to the original dir, and delete the temporary one
+        os.chdir(self.origdir)
+        if self.tmpdir is not None:
+            shutil.rmtree(self.tmpdir)
+
+    def test0(self):
+        with open('test.pkl', 'wb') as f:
+            m = theano.tensor.matrix()
+            dest_pkl = 'my_test.pkl'
+            f = open(dest_pkl, 'wb')
+            strip_pickler = StripPickler(f, protocol=-1)
+            strip_pickler.dump(m)

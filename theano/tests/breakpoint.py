@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import numpy
 import pdb
 
@@ -12,8 +13,8 @@ class PdbBreakpoint(Op):
     conditional breakpoint, inside a theano function, based on a symbolic
     scalar condition.
 
-    @type name: String
-    @param name: name of the conditional breakpoint. To be printed when the
+    :type name: String
+    :param name: name of the conditional breakpoint. To be printed when the
                  breakpoint is activated.
 
     :note: WARNING. At least one of the outputs of the op must be used

@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import logging
 import warnings
 
@@ -33,7 +34,7 @@ class TensorType(Type):
         Optional name for this type.
 
     """
-
+    context_name = 'cpu'
     filter_checks_isfinite = False
     """
     When this is True, strict filtering rejects data containing NaN or
@@ -596,18 +597,18 @@ class TensorType(Type):
         }
         """ % locals()
 
-    def c_headers(self):
+    def c_headers(self, c_compiler):
         """
         Override `CLinkerObject.c_headers`.
 
         """
-        return scal.get_scalar_type(self.dtype).c_headers()
+        return scal.get_scalar_type(self.dtype).c_headers(c_compiler)
 
-    def c_libraries(self):
-        return scal.get_scalar_type(self.dtype).c_libraries()
+    def c_libraries(self, c_compiler):
+        return scal.get_scalar_type(self.dtype).c_libraries(c_compiler)
 
-    def c_compile_args(self):
-        return scal.get_scalar_type(self.dtype).c_compile_args()
+    def c_compile_args(self, c_compiler):
+        return scal.get_scalar_type(self.dtype).c_compile_args(c_compiler)
 
     def c_support_code(self):
         """

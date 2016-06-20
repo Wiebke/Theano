@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import logging
 import sys
 import unittest
@@ -328,6 +329,14 @@ class T_subtensor(unittest.TestCase, utt.TestOptimizationMixin):
         x = numpy.arange(100).reshape((5, 5, 4))
         numpy.allclose(res, x[[slice(1, -1)] * x.ndim])
 
+    def test_slice_symbol(self):
+        x = self.shared(numpy.random.rand(5, 4).astype(self.dtype))
+        y = self.shared(numpy.random.rand(1, 2, 3).astype(self.dtype))
+        o = x[:y.shape[0], None, :]
+        f = theano.function([], o, mode=self.mode)
+        ret = f()
+        assert ret.shape == (1, 1, 4)
+
     def test_newaxis(self):
         """
         newaxis support comes from logic in the __getitem__ of TensorType
@@ -558,6 +567,25 @@ class T_subtensor(unittest.TestCase, utt.TestOptimizationMixin):
             return advanced_set_subtensor1(x, y, [1, 3])
         utt.verify_grad(fun, [numpy.random.rand(5, 5).astype(self.dtype),
                               numpy.random.rand(2, 5).astype(self.dtype)])
+
+        # test set_subtensor broadcast
+        self.dtype = 'float32'
+        from theano.sandbox.cuda.dnn import dnn_conv
+
+        x = tensor.tensor4('x', dtype=self.dtype)
+        indexes = theano.shared(numpy.int32([1, 2, 3, 4]))
+        W = self.shared(numpy.random.random(
+            (10, 10, 3, 3)).astype(self.dtype))
+
+        h = x + W
+        h = tensor.set_subtensor(h[indexes], h[indexes])
+        g = tensor.grad(h.sum(), W)
+        N = 2
+        if theano.config.mode == "FAST_COMPILE" and self.adv_incsub1 is tensor.AdvancedIncSubtensor1:
+            N = 3
+        f = self.function([x], g, op=self.adv_incsub1, N=N)
+
+        f(numpy.random.random((10, 10, 3, 3)).astype(self.dtype))
 
     def test_adv_sub1_idx_broadcast(self):
         # The idx can be a broadcastable vector.
@@ -973,7 +1001,10 @@ class T_subtensor(unittest.TestCase, utt.TestOptimizationMixin):
                         if len(inc_shape) == len(data_shape) and (
                                 len(inc_shapes) == 0 or inc_shape[0] != 1):
                             inc_shape = (n_to_inc,) + inc_shape[1:]
-                        inc_size = numpy.product(inc_shape)
+                        # The param dtype is needed when inc_shape is empty.
+                        # By default, it would return a float and rng.uniform
+                        # with NumPy 1.10 will raise a Deprecation warning.
+                        inc_size = numpy.product(inc_shape, dtype='int')
                         # Corresponding numeric variable.
                         inc_num = rng.uniform(size=inc_size).astype(self.dtype)
                         inc_num = inc_num.reshape(inc_shape)
@@ -1261,7 +1292,7 @@ class TestAdvancedSubtensor(unittest.TestCase):
         self.mode = mode
         self.dtype = dtype
         self.ignore_topo = ignore_topo
-        return super(TestAdvancedSubtensor, self).__init__(name)
+        super(TestAdvancedSubtensor, self).__init__(name)
 
     def setUp(self):
         self.s = iscalar()

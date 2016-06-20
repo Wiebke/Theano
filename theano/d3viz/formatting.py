@@ -2,6 +2,7 @@
 
 Author: Christof Angermueller <cangermueller@gmail.com>
 """
+from __future__ import absolute_import, print_function, division
 
 import numpy as np
 import os
@@ -16,11 +17,18 @@ from theano.compile import builders
 
 pydot_imported = False
 try:
-    import pydot as pd
+    # pydot-ng is a fork of pydot that is better maintained
+    import pydot_ng as pd
     if pd.find_graphviz():
         pydot_imported = True
 except ImportError:
-    pass
+    try:
+        # fall back on pydot if necessary
+        import pydot as pd
+        if pd.find_graphviz():
+            pydot_imported = True
+    except ImportError:
+        pass  # tests should not fail on optional dependency
 
 
 class PyDotFormatter(object):
@@ -44,7 +52,9 @@ class PyDotFormatter(object):
     def __init__(self, compact=True):
         """Construct PyDotFormatter object."""
         if not pydot_imported:
-            raise ImportError('Failed to import pydot. Please install pydot!')
+            raise ImportError('Failed to import pydot. You must install '
+                              'graphviz and either pydot or pydot-ng for '
+                              '`PyDotFormatter` to work.')
 
         self.compact = compact
         self.node_colors = {'input': 'limegreen',
@@ -177,10 +187,9 @@ class PyDotFormatter(object):
             for id, var in enumerate(node.inputs):
                 var_id = self.__node_id(var.owner if var.owner else var)
                 if var.owner is None:
-                    vparams = {}
-                    vparams['name'] = var_id
-                    vparams['label'] = var_label(var)
-                    vparams['node_type'] = 'input'
+                    vparams = {'name': var_id,
+                               'label': var_label(var),
+                               'node_type': 'input'}
                     if isinstance(var, gof.Constant):
                         vparams['node_type'] = 'constant_input'
                     elif isinstance(var, theano.tensor.sharedvar.
@@ -217,13 +226,12 @@ class PyDotFormatter(object):
                 var_id = self.__node_id(var)
 
                 if var in outputs or len(var.clients) == 0:
-                    vparams = {}
-                    vparams['name'] = var_id
-                    vparams['label'] = var_label(var)
-                    vparams['node_type'] = 'output'
-                    vparams['dtype'] = type_to_str(var.type)
-                    vparams['tag'] = var_tag(var)
-                    vparams['style'] = 'filled'
+                    vparams = {'name': var_id,
+                               'label': var_label(var),
+                               'node_type': 'output',
+                               'dtype': type_to_str(var.type),
+                               'tag': var_tag(var),
+                               'style': 'filled'}
                     if len(var.clients) == 0:
                         vparams['fillcolor'] = self.node_colors['unused']
                     else:

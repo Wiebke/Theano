@@ -4,10 +4,6 @@
 Installing Theano
 =================
 
-.. note::
-    If you are a member of LISA Labo, have a look at :ref:`lisa_labo` for
-    lab-specific installation instructions.
-
 
 Requirements
 ------------
@@ -20,11 +16,11 @@ instructions below for detailed installation steps):
         We develop mainly on 64-bit Linux machines. other architectures are
         not well-tested.
 
-    Python_ >= 2.6
+    Python_ 2 >= 2.6 or Python_ 3 >= 3.3
         The development package (``python-dev`` or ``python-devel``
         on most Linux distributions) is recommended (see just below).
         Python 2.4 was supported up to and including the release 0.6.
-        Python 3 is supported via 2to3 only, starting from 3.3.
+        Python 3 is supported past the 3.3 release.
 
     ``g++``, ``python-dev``
         Not technically required but *highly* recommended, in order to compile
@@ -33,7 +29,7 @@ instructions below for detailed installation steps):
         g++ >= 4.2 (for openmp that is currently always used)
         more recent version recommended!
 
-    `NumPy <http://numpy.scipy.org/>`_ >= 1.6.2
+    `NumPy <http://numpy.scipy.org/>`_ >= 1.7.1
         Earlier versions could work, but we don't test it.
 
     `SciPy <http://scipy.org>`_ >= 0.11
@@ -53,7 +49,7 @@ instructions below for detailed installation steps):
 
 The following libraries and software are optional:
 
-    `nose <http://somethingaboutorange.com/mrl/projects/nose/>`_
+    `nose <http://nose.readthedocs.org/en/latest/>`_ >= 1.3.0 and `nose-parameterized <https://pypi.python.org/pypi/nose-parameterized/>`_ >= 0.5.0
         Recommended, to run Theano's test-suite.
 
     `Sphinx <http://sphinx.pocoo.org/>`_ >= 0.5.1, `pygments <http://pygments.org/>`_
@@ -63,8 +59,9 @@ The following libraries and software are optional:
     `Git <http://git-scm.com>`_
         To download bleeding-edge versions of Theano.
 
-    `pydot <https://code.google.com/p/pydot/>`_
+    `graphiz <http://www.graphviz.org/>`__ and either `pydot-ng <https://github.com/pydot/pydot-ng>`__ or `pydot <https://code.google.com/p/pydot/>`__
         To be able to make picture of Theano computation graph.
+	pydot-ng is a pydot compatible replacement that support newer Python.
 
     `NVIDIA CUDA drivers and SDK`_
         Required for GPU code generation/execution on NVIDIA gpus
@@ -120,21 +117,24 @@ A contributor made rpm package for Mandriva_ 2010.2 of Theano 0.3.1.
 
 .. _linux_basic:
 
-Docker images
-~~~~~~~~~~~~~
+Docker
+~~~~~~
 
-Builds of Theano are available as `Docker <https://www.docker.com/whatisdocker>`_ images:
-`Theano Docker (CPU) <https://hub.docker.com/r/kaixhin/theano/>`_ or `Theano Docker (CUDA) <https://hub.docker.com/r/kaixhin/cuda-theano/>`_.
-These are updated on a weekly basis with bleeding-edge builds of Theano. Examples of running bash in a Docker container
-are as follows:
+Builds of Theano are available as `Docker <https://www.docker.com>`_
+images: `Theano Docker (CPU) <https://hub.docker.com/r/kaixhin/theano/>`_ or
+`Theano Docker (CUDA) <https://hub.docker.com/r/kaixhin/cuda-theano/>`_. These
+are updated on a weekly basis with bleeding-edge builds of Theano.
+Examples of running bash in a Docker container are as follows:
 
 .. code-block:: bash
 
     sudo docker run -it kaixhin/theano
-    sudo docker run -it --device /dev/nvidiactl --device /dev/nvidia-uvm --device /dev/nvidia0 kaixhin/cuda-theano:7.0
+    sudo nvidia-docker run -it kaixhin/cuda-theano:7.0
 
-For a guide to Docker, see the `official docs <https://docs.docker.com/userguide/>`_. For more details on how to use the
-Theano Docker images, including requirements for CUDA support, consult the `source project <https://github.com/Kaixhin/dockerfiles>`_.
+For a guide to Docker, see the `official docs <https://docs.docker.com>`_.
+CUDA support requires `NVIDIA Docker <https://github.com/NVIDIA/nvidia-docker>`_.
+For more details on how to use the Theano Docker images,
+consult the `source project <https://github.com/Kaixhin/dockerfiles>`_.
 
 Basic user install instructions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -147,7 +147,13 @@ by typing
 
     pip install Theano
 
-You may need to add ``sudo``  before this command to install into your
+This should work under Python 2 or Python 3. To test, run
+
+.. code-block:: bash
+
+    nosetests theano
+
+You may need to add ``sudo``  before the ``pip`` command to install into your
 system's ``site-packages`` directory. If you do not have administrator access
 to your machine, you can install Theano locally (to ~/.local) using
 
@@ -226,7 +232,7 @@ Bleeding-edge install instructions
 If you are a developer of Theano, then check out the :ref:`dev_start_guide`.
 
 If you want the bleeding-edge without developing the code you can use pip for
-this with the command line below. Note that it will also try to install Theano's dependencies 
+this with the command line below. Note that it will also try to install Theano's dependencies
 (like NumPy and SciPy), but not upgrade them. If you wish to upgrade them,
 remove the ``--no-deps`` switch to it, but go see a previous warning before doing this.
 
@@ -254,11 +260,6 @@ From here, the easiest way to get started is (this requires setuptools_ or distr
 
     cd Theano
     python setup.py develop
-
-.. note::
-
-   "python setup.py develop ..." does not work on Python 3 as it does not call
-   the converter from Python 2 code to Python 3 code.
 
 This will install a ``.pth`` file in your ``site-packages`` directory that
 tells Python where to look for your Theano installation (i.e. in the
@@ -377,7 +378,7 @@ If ``theano-nose`` is not found by your shell, you will need to add
 
     If you want GPU-related tests to run on a specific GPU device, and not
     the default one, you should use :attr:`~config.init_gpu_device`.
-    For instance: ``THEANO_FLAGS=device=cpu,init_gpu_device=gpu1``.
+    For instance: ``THEANO_FLAGS=device=cpu,init_gpu_device=cuda1``.
 
     See :ref:`libdoc_config` for more information on how to change these
     configuration options.
@@ -482,7 +483,7 @@ Using the GPU
 
 The first thing you'll need for Theano to use your GPU is Nvidia's
 GPU-programming toolchain. You should install at least the CUDA driver and the CUDA Toolkit, as
-`described here <http://www.nvidia.com/object/cuda_get.html>`_.  The CUDA
+`described here <https://developer.nvidia.com/cuda-toolkit>`_.  The CUDA
 Toolkit installs a folder on your computer with subfolders *bin*, *lib*,
 *include*, and some more too.  (Sanity check: The *bin* subfolder should contain an *nvcc*
 program which is the compiler for GPU code.)  This folder is called the *cuda
@@ -510,25 +511,25 @@ Any one of them is enough.
 
     :ref:`Ubuntu instructions <install_ubuntu_gpu>`.
 
-
+Next, install `libgpuarray <http://deeplearning.net/software/libgpuarray/installation.html>`_.
 
 Once that is done, the only thing left is to change the ``device`` option to name the GPU device in your
 computer, and set the default floating point computations to float32.
-For example: ``THEANO_FLAGS='cuda.root=/path/to/cuda/root,device=gpu,floatX=float32'``.
+For example: ``THEANO_FLAGS='cuda.root=/path/to/cuda/root,device=cuda,floatX=float32'``.
 You can also set these options in the .theanorc file's ``[global]`` section:
 
      .. code-block:: cfg
 
         [global]
-        device = gpu
+        device = cuda
         floatX = float32
 
 Note that:
 
-    * If your computer has multiple GPUs and you use 'device=gpu', the driver
-      selects the one to use (usually gpu0).
-    * You can use the program nvida-smi to change this policy.
-    * You can choose one specific GPU by specifying 'device=gpuX', with X the
+    * If your computer has multiple GPUs and you use 'device=cuda', the driver
+      selects the one to use (usually cuda0).
+    * You can use the program ``nvidia-smi`` to change this policy.
+    * You can choose one specific GPU by specifying 'device=cudaX', with X the
       the corresponding GPU index (0, 1, 2, ...)
     * By default, when ``device`` indicates preference for GPU computations,
       Theano will fall back to the CPU if there is a problem with the GPU.
@@ -615,7 +616,7 @@ To install the missing Theano optional dependency (pydot):
 
 .. code-block:: bash
 
-    $ conda install pydot
+    $ conda install pydot-ng
 
 If you want the bleeding edge version instead execute this command:
 
@@ -747,7 +748,7 @@ Theano dependencies is easy, but be aware that it will take a long time
 
 - Afterwards, please check that the ``scipy`` module that is imported in
   Python is the right one (and is a recent one). For instance, ``import
-  scipy`` followed by ``print scipy.__version__`` and ``print scipy.__path__``
+  scipy`` followed by ``print(scipy.__version__)`` and ``print(scipy.__path__)``
   should result in a version number of at least 0.7.0 and a path that starts
   with ``/opt/local`` (the path where MacPorts installs its packages). If this
   is not the case, then you might have some old installation of ``scipy`` in your
@@ -796,6 +797,8 @@ setup CUDA, but be aware of the following caveats:
      toggle your GPU on, which can be done with
      `gfxCardStatus <http://codykrieger.com/gfxCardStatus>`__.
 
+Next, install `libgpuarray <http://deeplearning.net/software/libgpuarray/installation.html>`_.
+
 Once your setup is complete, head to :ref:`using_gpu` to find how to verify
 everything is working properly.
 
@@ -816,21 +819,6 @@ try the following.
 
       [gcc]
       cxxflags = -L/opt/local/lib
-
-- An obscure ``Bus error`` can sometimes be caused when linking
-  Theano-generated object files against the ``framework`` library in Leopard.
-  For this reason, we have disabled linking with ``-framework Python``, since on
-  most configurations this solves the ``Bus error`` problem. If this default
-  configuration causes problems with your Python/Theano installation and you think
-  that linking with ``-framework Python`` might help, then either set
-  the :envvar:`THEANO_FLAGS` environment variable with
-  ``THEANO_FLAGS=cmodule.mac_framework_link`` or edit your ``~/.theanorc`` to
-  contain
-
-    .. code-block:: cfg
-
-      [cmodule]
-      mac_framework_link=True
 
 - More generally, to investigate libraries issues, you can use the ``otool -L``
   command on ``.so`` files found under your ``~/.theano`` directory. This will
@@ -884,7 +872,7 @@ We recommend you look at the documentation on the website, since it
 will be more current than the documentation included with the package.
 
 If you really wish to build the documentation yourself, you will need
-epydoc and sphinx, as described above. Issue the following command::
+sphinx, as described above. Issue the following command::
 
     python ./doc/scripts/docgen.py
 

@@ -1,25 +1,12 @@
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 import copy
 import sys
 
-import numpy
-
 from theano.compat import DefaultOrderedDict
 from theano.misc.ordered_set import OrderedSet
-from six import StringIO
+from six import StringIO, integer_types
 from theano.gof import opt
-from theano.configparser import AddConfigVar, FloatParam
 from theano import config
-
-AddConfigVar('optdb.position_cutoff',
-             'Where to stop eariler during optimization. It represent the'
-             ' position of the optimizer where to stop.',
-             FloatParam(numpy.inf),
-             in_c_key=False)
-AddConfigVar('optdb.max_use_ratio',
-             'A ratio that prevent infinite loop in EquilibriumOptimizer.',
-             FloatParam(5),
-             in_c_key=False)
 
 
 class DB(object):
@@ -160,6 +147,9 @@ multiple time in a DB. Tryed to register "%s" again under the new name "%s".
         for variable in variables:
             return variable
 
+    def __contains__(self, name):
+        return name in self.__db__
+
     def print_summary(self, stream=sys.stdout):
         print("%s (id %i)" % (self.__class__.__name__, id(self)), file=stream)
         print("  names", self._names, file=stream)
@@ -254,39 +244,57 @@ class EquilibriumDB(DB):
         optimization application. This could result in less fgraph iterations,
         but this doesn't mean it will be faster globally.
 
+    tracks_on_change_inputs
+        If True, we will re-apply local opt on nodes whose inputs
+        changed during local optimization application. This could
+        result in less fgraph iterations, but this doesn't mean it
+        will be faster globally.
+
     Notes
     -----
     We can put LocalOptimizer and Optimizer as EquilibriumOptimizer
     suppor both.
 
+    It is probably not a good idea to have ignore_newtrees=False and
+    tracks_on_change_inputs=True
+
     """
 
-    def __init__(self, ignore_newtrees=True):
+    def __init__(self, ignore_newtrees=True, tracks_on_change_inputs=False):
         super(EquilibriumDB, self).__init__()
         self.ignore_newtrees = ignore_newtrees
+        self.tracks_on_change_inputs = tracks_on_change_inputs
         self.__final__ = {}
+        self.__cleanup__ = {}
 
     def register(self, name, obj, *tags, **kwtags):
-        if 'final_opt' in kwtags:
-            final_opt = kwtags['final_opt']
-            kwtags.pop('final_opt', None)
-        else:
-            final_opt = False
+        final_opt = kwtags.pop('final_opt', False)
+        cleanup = kwtags.pop('cleanup', False)
+        # An opt should not be final and clean up
+        assert not (final_opt and cleanup)
         super(EquilibriumDB, self).register(name, obj, *tags, **kwtags)
         self.__final__[name] = final_opt
+        self.__cleanup__[name] = cleanup
 
     def query(self, *tags, **kwtags):
         _opts = super(EquilibriumDB, self).query(*tags, **kwtags)
         final_opts = [o for o in _opts if self.__final__.get(o.name, False)]
-        opts = [o for o in _opts if o not in final_opts]
+        cleanup_opts = [o for o in _opts if self.__cleanup__.get(o.name,
+                                                                 False)]
+        opts = [o for o in _opts
+                if o not in final_opts and o not in cleanup_opts]
         if len(final_opts) == 0:
             final_opts = None
+        if len(cleanup_opts) == 0:
+            cleanup_opts = None
         return opt.EquilibriumOptimizer(
             opts,
             max_use_ratio=config.optdb.max_use_ratio,
             ignore_newtrees=self.ignore_newtrees,
+            tracks_on_change_inputs=self.tracks_on_change_inputs,
             failure_callback=opt.NavigatorOptimizer.warn_inplace,
-            final_optimizers=final_opts)
+            final_optimizers=final_opts,
+            cleanup_optimizers=cleanup_opts)
 
 
 class SequenceDB(DB):
@@ -313,7 +321,7 @@ class SequenceDB(DB):
 
     def register(self, name, obj, position, *tags):
         super(SequenceDB, self).register(name, obj, *tags)
-        assert isinstance(position, (int, float))
+        assert isinstance(position, (integer_types, float))
         self.__position__[name] = position
 
     def query(self, *tags, **kwtags):

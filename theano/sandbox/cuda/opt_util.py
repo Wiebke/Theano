@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 from functools import wraps
 
 import numpy
@@ -57,7 +58,7 @@ def is_equal(var, val):
         return False
 
 
-def alpha_merge(cls, alpha_in, beta_in, nd):
+def alpha_merge(cls, alpha_in, beta_in):
     def wrapper(maker):
         @local_optimizer([GpuElemwise])
         @wraps(maker)
@@ -68,9 +69,13 @@ def alpha_merge(cls, alpha_in, beta_in, nd):
                 targ = find_node(node.inputs[0], cls)
                 if targ is None:
                     targ = find_node(node.inputs[1], cls)
-                    lr = grab_cpu_scalar(node.inputs[0], nd=nd)
+                    if targ is None:
+                        return
+                    lr = grab_cpu_scalar(node.inputs[0],
+                                         nd=targ.outputs[0].ndim)
                 else:
-                    lr = grab_cpu_scalar(node.inputs[1], nd=nd)
+                    lr = grab_cpu_scalar(node.inputs[1],
+                                         nd=targ.outputs[0].ndim)
                 if lr is None or targ is None:
                     return None
                 inputs = list(targ.inputs)
@@ -93,7 +98,7 @@ def alpha_merge(cls, alpha_in, beta_in, nd):
     return wrapper
 
 
-def output_merge(cls, alpha_in, beta_in, out_in, nd):
+def output_merge(cls, alpha_in, beta_in, out_in):
     def wrapper(maker):
         @local_optimizer([GpuElemwise])
         @wraps(maker)

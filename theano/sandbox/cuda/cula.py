@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import pkg_resources
 
 import theano
@@ -16,7 +17,7 @@ cula_available = False
 try:
     from scikits.cuda import cula
     cula_available = True
-except (ImportError, OSError, pkg_resources.DistributionNotFound):
+except (ImportError, OSError, RuntimeError, pkg_resources.DistributionNotFound):
     pass
 
 cula_initialized = False

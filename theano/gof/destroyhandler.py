@@ -3,6 +3,8 @@ Classes and functions for validating graphs that contain view
 and inplace operations.
 
 """
+from __future__ import absolute_import, print_function, division
+
 from collections import deque
 
 from six import iteritems
@@ -116,21 +118,14 @@ def _contains_cycle(fgraph, orderings):
 
         # this is faster than calling get_parents
         owner = var.owner
-        if owner:
-            parents = [owner]
-        else:
-            parents = []
-
         # variables don't appear in orderings, so we don't need to worry
         # about that here
-
-        if parents:
-            for parent in parents:
-                # insert node in node_to_children[r]
-                # (if r is not already in node_to_children,
-                # intialize it to [])
-                node_to_children.setdefault(parent, []).append(var)
-            parent_counts[var] = len(parents)
+        if owner:
+            # insert node in node_to_children[r]
+            # (if r is not already in node_to_children,
+            # intialize it to [])
+            node_to_children.setdefault(owner, []).append(var)
+            parent_counts[var] = 1
         else:
             visitable.append(var)
             parent_counts[var] = 0

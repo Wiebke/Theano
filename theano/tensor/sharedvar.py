@@ -1,6 +1,8 @@
+from __future__ import absolute_import, print_function, division
 import traceback
 
 import numpy
+from six import integer_types
 
 import theano.tensor.basic
 from theano.tensor.basic import TensorType, _tensor_py_operators
@@ -24,7 +26,7 @@ class TensorSharedVariable(_tensor_py_operators, SharedVariable):
 
 @shared_constructor
 def tensor_constructor(value, name=None, strict=False, allow_downcast=None,
-                       borrow=False, broadcastable=None):
+                       borrow=False, broadcastable=None, target='cpu'):
     """
     SharedVariable Constructor for TensorType.
 
@@ -36,6 +38,9 @@ def tensor_constructor(value, name=None, strict=False, allow_downcast=None,
     The optional `broadcastable` argument will override this default.
 
     """
+    if target != 'cpu':
+        raise TypeError('not for cpu')
+
     if not isinstance(value, numpy.ndarray):
         raise TypeError()
 
@@ -65,7 +70,7 @@ class ScalarSharedVariable(_tensor_py_operators, SharedVariable):
 
 @shared_constructor
 def scalar_constructor(value, name=None, strict=False, allow_downcast=None,
-                       borrow=False):
+                       borrow=False, target='cpu'):
     """
     SharedVariable constructor for scalar values. Default: int64 or float64.
 
@@ -78,7 +83,10 @@ def scalar_constructor(value, name=None, strict=False, allow_downcast=None,
     borrow, as it is a hint to Theano that we can reuse it.
 
     """
-    if not isinstance(value, (numpy.number, float, int, complex)):
+    if target != 'cpu':
+        raise TypeError('not for cpu')
+
+    if not isinstance(value, (numpy.number, float, integer_types, complex)):
         raise TypeError()
     try:
         dtype = value.dtype

@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 from itertools import product
 import time
 import unittest
@@ -67,6 +68,15 @@ def eval_outputs(outputs):
     return compile.function([], outputs)()[0]
 
 
+# scipy 0.17 will return sparse values in all cases while previous
+# version sometimes wouldn't.  This will make everything dense so that
+# we can use assert_allclose.
+def as_ndarray(val):
+    if hasattr(val, 'toarray'):
+        return val.toarray()
+    return val
+
+
 def random_lil(shape, dtype, nnz):
     rval = sp.lil_matrix(shape, dtype=dtype)
     huge = 2 ** 30
@@ -117,7 +127,7 @@ def sparse_random_inputs(format, shape, n=1, out_dtype=None, p=0.5, gap=None,
     if out_dtype is None:
         out_dtype = theano.config.floatX
 
-    assert 0 <= p and p <= 1
+    assert 0 <= p <= 1
     assert len(shape) == 2
     assert out_dtype in sparse.all_dtypes
     assert gap is None or isinstance(gap, (tuple, list))
@@ -2956,7 +2966,7 @@ class StructuredAddSVTester(unittest.TestCase):
 
                 out = f(spmat, mat)
 
-                utt.assert_allclose(spones.multiply(spmat + mat),
+                utt.assert_allclose(as_ndarray(spones.multiply(spmat + mat)),
                                     out.toarray())
 
 
@@ -3072,7 +3082,7 @@ class SamplingDotTester(utt.InferShapeTester):
         x, y, p = self.a
         expected = p.multiply(numpy.dot(x, y.T))
 
-        utt.assert_allclose(expected, tested.toarray())
+        utt.assert_allclose(as_ndarray(expected), tested.toarray())
         assert tested.format == 'csr'
         assert tested.dtype == expected.dtype
 

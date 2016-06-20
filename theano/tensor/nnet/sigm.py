@@ -5,7 +5,7 @@ These functions implement special cases of exp and log to improve numerical
 stability.
 
 """
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 
 import warnings
 
@@ -14,16 +14,17 @@ import numpy
 import theano
 from theano import config, gof, printing, scalar
 from theano.compat import imap
-from theano.configparser import AddConfigVar, BoolParam
 from theano.printing import pprint
 from theano.tensor import basic as tensor
 from theano.tensor import elemwise, opt, NotScalarConstantError
-
+from theano.tensor.type import values_eq_approx_remove_inf
+from theano.gof.opt import copy_stack_trace
 
 ############
 #
 # SCALAR OPS
 #
+
 
 class ScalarSigmoid(scalar.UnaryScalarOp):
     """
@@ -262,13 +263,14 @@ def local_ultra_fast_sigmoid(node):
     if (isinstance(node.op, tensor.Elemwise) and
             node.op.scalar_op == scalar_sigmoid):
         out = ultra_fast_sigmoid(node.inputs[0])
+        copy_stack_trace(node.outputs[0], out)
 
         def values_eq_approx_remove_low_prec(a, b):
             # atol is found by trial/error.
             # Other test could fail without good reason.
             return tensor.TensorType.values_eq_approx(a, b, atol=0.02)
         # Let DebugMode know that there this opt approx the values.
-        out.values_eq_approx = values_eq_approx_remove_low_prec
+        out.tag.values_eq_approx = values_eq_approx_remove_low_prec
         return [out]
 theano.compile.optdb['uncanonicalize'].register("local_ultra_fast_sigmoid",
                                                 local_ultra_fast_sigmoid)
@@ -301,19 +303,23 @@ def local_hard_sigmoid(node):
     if (isinstance(node.op, tensor.Elemwise) and
             node.op.scalar_op == scalar_sigmoid):
         out = hard_sigmoid(node.inputs[0])
+        copy_stack_trace(node.outputs[0], out)
 
         def values_eq_approx_remove_low_prec(a, b):
             # atol is found by trial/error.
             # Other test could fail without good reason.
             return tensor.TensorType.values_eq_approx(a, b, atol=0.1)
         # Let DebugMode know that there this opt approx the values.
-        out.values_eq_approx = values_eq_approx_remove_low_prec
+        out.tag.values_eq_approx = values_eq_approx_remove_low_prec
         return [out]
 theano.compile.optdb['uncanonicalize'].register("local_hard_sigmoid",
                                                 local_hard_sigmoid)
 
 
 class ScalarSoftplus(scalar.UnaryScalarOp):
+    """
+    This helps numerical stability.
+    """
     @staticmethod
     def static_impl(x):
         if x < -30.0:
@@ -378,6 +384,7 @@ logsigm_to_softplus = gof.PatternSub(
     (tensor.log, (sigmoid, 'x')),
     (tensor.neg, (softplus, (tensor.neg, 'x'))),
     allow_multiple_clients=True,
+    values_eq_approx=values_eq_approx_remove_inf,
     skip_identities_fn=_skip_mul_1)
 
 
@@ -403,20 +410,31 @@ log1msigm_to_softplus = gof.PatternSub(
             (sigmoid, 'x'))),
     (tensor.neg, (softplus, 'x')),
     allow_multiple_clients=True,
+    values_eq_approx=values_eq_approx_remove_inf,
     skip_identities_fn=_skip_mul_1)
+
 
 log1pexp_to_softplus = gof.PatternSub(
     (tensor.log1p,
      (tensor.exp, 'x')),
     (softplus, 'x'),
+    values_eq_approx=values_eq_approx_remove_inf,
+    allow_multiple_clients=True)
+
+log1p_neg_sigmoid = gof.PatternSub(
+    (tensor.log1p,
+     (tensor.neg, (sigmoid, 'x'))),
+    (tensor.neg, (softplus, 'x')),
+    values_eq_approx=values_eq_approx_remove_inf,
     allow_multiple_clients=True)
 
 opt.register_stabilize(logsigm_to_softplus, name='logsigm_to_softplus')
 opt.register_stabilize(log1msigm_to_softplus, name='log1msigm_to_softplus')
 opt.register_stabilize(log1pexp_to_softplus, name='log1pexp_to_softplus')
+opt.register_stabilize(log1p_neg_sigmoid, name='log1p_neg_sigmoid,')
 
 
-def is_1pexp(t):
+def is_1pexp(t, only_process_constants=True):
     """
 
     Returns
@@ -428,8 +446,9 @@ def is_1pexp(t):
     """
     if t.owner and t.owner.op == tensor.add:
         scalars, scalar_inputs, nonconsts = \
-            opt.scalarconsts_rest(t.owner.inputs)
-        # scalar_inputs are potentially dimshuffled and fill'd scalars
+            opt.scalarconsts_rest(t.owner.inputs,
+                                  only_process_constants=only_process_constants)
+        # scalar_inputs are potentially dimshuffled and filled with scalars
         if len(nonconsts) == 1:
             maybe_exp = nonconsts[0]
             if maybe_exp.owner and maybe_exp.owner.op == tensor.exp:
@@ -453,14 +472,6 @@ def is_1pexp(t):
                         'option to False, or `warn.ignore_bug_before` to at '
                         'least \'0.4.1\'.')
     return None
-
-
-AddConfigVar(
-    'warn.identify_1pexp_bug',
-    'Warn if Theano versions prior to 7987b51 (2011-12-18) could have '
-    'yielded a wrong result due to a bug in the is_1pexp function',
-    BoolParam(theano.configdefaults.warn_default('0.4.1')),
-    in_c_key=False)
 
 
 def is_exp(var):
@@ -601,6 +612,7 @@ def local_exp_over_1_plus_exp(node):
             else:
                 # case: 1/(1+exp(x))
                 sigmoids.append(sigmoid(-t))
+            copy_stack_trace(node.outputs[0], sigmoids[-1])
 
         if not sigmoids:  # we didn't find any.  abort
             return
@@ -614,12 +626,17 @@ def local_exp_over_1_plus_exp(node):
         if num_neg ^ denom_neg:
             new_num = -new_num
 
+        copy_stack_trace(num, new_num)
+
         if len(denom_rest) == 0:
             return [new_num]
         elif len(denom_rest) == 1:
-            return [new_num / denom_rest[0]]
+            out = new_num / denom_rest[0]
         else:
-            return [new_num / tensor.mul(*denom_rest)]
+            out = new_num / tensor.mul(*denom_rest)
+
+        copy_stack_trace(node.outputs[0], out)
+        return [out]
 
 
 def parse_mul_tree(root):
@@ -912,6 +929,7 @@ def local_sigm_times_exp(node):
     exp(x) * sigm(-x) -> sigm(x)
     exp(-x) * sigm(x) -> sigm(-x)
 
+    todo: add stack traces to the intermediate variables
     """
     # Bail early if it is not a multiplication.
     if node.op != tensor.mul:
@@ -927,7 +945,10 @@ def local_sigm_times_exp(node):
     # get rid of them.
     mul_tree = simplify_mul(mul_tree)
     # Recompute final output based on the updated tree.
-    return [compute_mul(mul_tree)]
+    out = compute_mul(mul_tree)
+    # keep the stack trace
+    copy_stack_trace(node.outputs[0], out)
+    return [out]
 
 
 @opt.register_stabilize
@@ -943,15 +964,22 @@ def local_inv_1_plus_exp(node):
         inv_arg = node.inputs[0]
         if inv_arg.owner and inv_arg.owner.op == tensor.add:
             scalars, scalar_inputs, nonconsts = \
-                opt.scalarconsts_rest(inv_arg.owner.inputs)
+                opt.scalarconsts_rest(inv_arg.owner.inputs, only_process_constants=True)
             # scalar_inputs are potentially dimshuffled and fill'd scalars
             if len(nonconsts) == 1:
                 if nonconsts[0].owner and nonconsts[0].owner.op == tensor.exp:
                     if scalars and numpy.allclose(numpy.sum(scalars), 1):
-                        return opt._fill_chain(
+                        out = opt._fill_chain(
                             sigmoid(
                                 tensor.neg(nonconsts[0].owner.inputs[0])),
                             scalar_inputs)
+                        # keep combined stack traces of
+                        #     exp(x):           nonconsts[0],
+                        #     1 + exp(x):       inv_arg,
+                        #     1 / (1 + exp(x)): node.outputs[0]
+                        copy_stack_trace(
+                            [nonconsts[0], inv_arg, node.outputs[0]], out)
+                        return out
 
 # Registration is below, and conditional.
 
@@ -972,7 +1000,9 @@ def local_1msigmoid(node):
             except Exception:
                 return
             if numpy.allclose(numpy.sum(val_l), 1):
-                return [sigmoid(-sub_r.owner.inputs[0])]
+                out = sigmoid(-sub_r.owner.inputs[0])
+                copy_stack_trace([sub_r, node.outputs[0]], out)
+                return [out]
 
 register_local_1msigmoid = False
 # This is False because the Stabilize pattern above

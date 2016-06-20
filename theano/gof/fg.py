@@ -4,7 +4,7 @@ Contains the FunctionGraph class and exception
 types that it can raise.
 
 """
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 import sys
 import time
 import traceback
@@ -49,8 +49,19 @@ class MissingInputError(Exception):
     A symbolic input needed to compute the outputs is missing.
 
     """
-
-    pass
+    def __init__(self, *args, **kwargs):
+        if kwargs:
+            # The call to list is needed for Python 3
+            assert list(kwargs.keys()) == ["variable"]
+            tr = getattr(list(kwargs.values())[0].tag, 'trace', [])
+            if type(tr) is list and len(tr) > 0:
+                sio = StringIO()
+                print("\nBacktrace when the variable is created:", file=sio)
+                for subtr in list(kwargs.values())[0].tag.trace:
+                    traceback.print_list(subtr, sio)
+                args = args + (str(sio.getvalue()),)
+        s = '\n'.join(args)  # Needed to have the new line print correctly
+        Exception.__init__(self, s)
 
 
 class FunctionGraph(utils.object2):
@@ -172,8 +183,6 @@ class FunctionGraph(utils.object2):
         for i, output in enumerate(outputs):
             output.clients.append(('output', i))
 
-        self.node_locks = {}
-        self.variable_locks = {}
         self.profile = None
         self.update_mapping = update_mapping
 
@@ -221,17 +230,14 @@ class FunctionGraph(utils.object2):
 
     def disown(self):
         """
-        WRITEME
         Cleans up all of this FunctionGraph's nodes and variables so they are
         not associated with this FunctionGraph anymore.
 
         The FunctionGraph should not be used anymore after disown is called.
 
-        This may not clean everything this FunctionGraph's features set in the
-        nodes and variables. If there are no features, this should set
-        them back to what they were originally.
-
         """
+        for f in self._features:
+            self.remove_feature(f)
         for apply_node in self.apply_nodes:
             del apply_node.fgraph
             del apply_node.deps
@@ -242,6 +248,8 @@ class FunctionGraph(utils.object2):
         self.variables = set()
         self.inputs = None
         self.outputs = None
+        self.profile = None
+        self.update_mapping = None
 
     # clients #
     def clients(self, r):
@@ -281,24 +289,75 @@ class FunctionGraph(utils.object2):
         """
         Removes all from the clients list of r.
 
-        WRITEME
+        This is the main method to remove variable or apply node from
+        an FunctionGraph.
+
+        If called with an empty list of clients and prune=True, this
+        will remove the owner of the variable (so an apply_node).
 
         Parameters
         ----------
-        r
-            Variable.
-        clients_to_remove
+        r : Variable
+            The clients of r will be removed.
+        clients_to_remove : List of (op, i) pairs
             List of (op, i) pairs such that node.inputs[i] is not r anymore.
+        prune : bool
+            If prune is True, it remove r from this fgraph if it don't
+            have clients left.
+
+        Returns
+        -------
+        bool
+            True if r is still in the fgraph and need to be pruned
+            later. This can happen only when prune is False. A second
+            call to this method with an empty list for
+            clients_to_remove and prune=True will remove r.
 
         """
         for entry in clients_to_remove:
             r.clients.remove(entry)
             assert entry not in r.clients  # an op,i pair should be unique
-        if not r.clients:
-            if prune:
-                self.__prune_r__(r, reason)
-                return False
+        if r.clients:
+            return False
+        if not prune:
             return True
+        variable = r
+        if variable.owner:
+            apply_node = variable.owner
+            used_or_output = [output for output in apply_node.outputs
+                              if output.clients or output in self.outputs]
+            # If the apply node is not used and is not an output
+            if not used_or_output:
+                if not hasattr(apply_node.tag, 'removed_by'):
+                    apply_node.tag.removed_by = []
+                apply_node.tag.removed_by.append(str(reason))
+                self.apply_nodes.remove(apply_node)
+                self.variables.difference_update(apply_node.outputs)
+                self.execute_callbacks('on_prune', apply_node, reason)
+
+                for i, input in enumerate(apply_node.inputs):
+                    self.__remove_clients__(input, [(apply_node, i)],
+                                            reason=reason)
+        # variable should not have any clients.
+        # assert not variable.clients
+
+        # variable should be in self.variables
+        # Why this assert fail? Making it True could cause opt speed up
+        # I think this is caused as we remove var in self.variables in
+        # another place.
+        # assert variable in self.variables
+
+        if variable in self.variables:
+            # If the owner have other outputs still used,
+            # then we must keep that variable in the graph.
+            if not variable.owner or not any(
+                [var for var in variable.owner.outputs
+                 if var.clients]):
+
+                self.variables.remove(variable)
+                # This allow to quickly know if a var is still in the fgraph
+                # or not.
+                del variable.fgraph
         return False
 
     # import #
@@ -319,7 +378,7 @@ class FunctionGraph(utils.object2):
             if isinstance(variable.type, NullType):
                 raise TypeError("Computation graph contains a NaN. " +
                                 variable.type.why_null)
-            raise MissingInputError("Undeclared input", variable)
+            raise MissingInputError("Undeclared input", variable=variable)
         if not getattr(variable, 'fgraph', None) is self:
             self.__setup_r__(variable)
         self.variables.add(variable)
@@ -347,78 +406,6 @@ class FunctionGraph(utils.object2):
                     if (r.owner is None and
                             not isinstance(r, graph.Constant) and
                             r not in self.inputs):
-                        # Verbose error message
-                        # Show a complete chain of variables from the missing input to an output
-                        if config.exception_verbosity == 'high':
-
-                            def find_path_to(output_var, input_var):
-                                """
-                                Returns a list of each variable on a (not
-                                necessarily unique) path from input_var to
-                                output_var, where each variable in the list has
-                                the preceding variable as one of its inputs.
-                                Returns None if no path exists.
-
-                                """
-                                # If output and input are the same we have a singleton path
-                                if output_var is input_var:
-                                    return [output_var]
-
-                                # If output has no inputs then there is no path
-                                owner = output_var.owner
-
-                                if owner is None:
-                                    return None
-
-                                # If input_var is an input to the output node, there is a
-                                # simple two element path
-                                inputs = owner.inputs
-
-                                if input_var in inputs:
-                                    return [input_var, output_var]
-
-                                # Otherwise we must recurse by searching for a path to one
-                                # of our inputs, then appending the output to that path
-                                for ipt in inputs:
-                                    path = find_path_to(ipt, input_var)
-
-                                    if path is not None:
-                                        path.append(output_var)
-
-                                        return path
-
-                                # Since none of the above methods returned a path, there is none
-                                return None
-
-                            # Try different outputs until we find one that has a path to the missing input
-                            for output in self.outputs:
-                                path = find_path_to(output, r)
-
-                                if path is not None:
-                                    break
-
-                            # if there is no path then r isn't really a graph input so we shouldn't be running error
-                            # handler code in the first place
-                            assert path is not None
-                            tr = getattr(r.tag, 'trace', [])
-                            detailed_err_msg = ""
-                            if len(tr) > 0:
-                                detailed_err_msg += "\nBacktrace when the variable is created:\n"
-
-                                # Print separate message for each element in
-                                # the list of batcktraces
-                                sio = StringIO()
-                                for subtr in tr:
-                                    traceback.print_list(subtr, sio)
-                                detailed_err_msg += str(sio.getvalue())
-                            raise MissingInputError(
-                                'A variable that is an input to the graph was '
-                                'neither provided as an input to the function '
-                                'nor given a value. A chain of variables '
-                                'leading from this input to an output is %s. '
-                                'This chain may not be unique' % str(path) +
-                                detailed_err_msg)
-
                         # Standard error message
                         raise MissingInputError((
                             "An input of the graph, used to compute %s, "
@@ -426,12 +413,15 @@ class FunctionGraph(utils.object2):
                             "Use the Theano flag exception_verbosity='high',"
                             "for more information on this error."
                             % str(node)),
-                            r)
+                            variable=r)
 
         for node in new_nodes:
             assert node not in self.apply_nodes
             self.__setup_node__(node)
             self.apply_nodes.add(node)
+            if not hasattr(node.tag, 'imported_by'):
+                node.tag.imported_by = []
+            node.tag.imported_by.append(str(reason))
             for output in node.outputs:
                 self.__setup_r__(output)
                 self.variables.add(output)
@@ -442,65 +432,6 @@ class FunctionGraph(utils.object2):
                 self.__add_clients__(input, [(node, i)])
             assert node.fgraph is self
             self.execute_callbacks('on_import', node, reason)
-
-    # prune #
-    def __prune_r__(self, variable, reason=None):
-        """
-        Should be called for variable that aren't used anymore:
-        len(var.clients) == 0.
-
-        This do not mean we will remove it from fgraph.variables. If
-        the owner stay in the fgraph as other outputs are still used,
-        the variable will stay in fgraph.variables.
-
-        """
-        # Prunes the owners of the variables.
-        if variable.owner:
-            self.__prune__(variable.owner, reason)
-        # variable should not have any clients.
-        # assert not variable.clients
-
-        # variable should be in self.variables
-        # Why this assert fail? Making it True could cause opt speed up
-        # I think this is caused as we remove var in self.variables in
-        # another place.
-        # assert variable in self.variables
-
-        if variable in self.variables:
-            # If the owner have other outputs still used,
-            # then we must keep that variable in the graph.
-            if not variable.owner or not any(
-                [var for var in variable.owner.outputs
-                 if var.clients]):
-
-                self.variables.remove(variable)
-                # This allow to quickly know if a var is still in the fgraph
-                # or not.
-                del variable.fgraph
-
-    def __prune__(self, apply_node, reason=None):
-        """
-        Always called on owner of pruned variable from the graph.
-
-        This do not mean we will remove it from the graph. If other
-        outputs are still used, we will keep the node in the graph.
-
-        """
-        # If apply_node's outputs have no clients, removes it from the graph
-        # and recursively tries to prune its inputs. If at least one
-        # of the op's outputs is an output to the graph or has a client
-        # then __prune__ is a no-op.
-        for output in apply_node.outputs:
-            # Cannot prune an op which is an output or used somewhere
-            if output.clients or output in self.outputs:
-                return
-        self.apply_nodes.remove(apply_node)
-        self.variables.difference_update(apply_node.outputs)
-        self.execute_callbacks('on_prune', apply_node, reason)
-
-        for i, input in enumerate(apply_node.inputs):
-            self.__remove_clients__(input, [(apply_node, i)], reason=reason)
-        # self.__prune_r__(apply_node.inputs)
 
     # change input #
     def change_input(self, node, i, new_r, reason=None):
@@ -546,9 +477,8 @@ class FunctionGraph(utils.object2):
         # transaction will be reverted later.
         self.execute_callbacks('on_change_input', node, i,
                                r, new_r, reason=reason)
-
         if prune:
-            self.__prune_r__(r, reason=reason)
+            self.__remove_clients__(r, [], True, reason=reason)
 
     # replace #
     def replace(self, r, new_r, reason=None, verbose=None):

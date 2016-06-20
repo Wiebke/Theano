@@ -33,7 +33,6 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
   if (c_set_filterNd(*kerns, APPLY_SPECIFIC(kerns)) == -1)
     return 1;
 
-#if defined(CUDNN_VERSION) && CUDNN_VERSION >= 3000
   {
     size_t worksize;
     void *workspace;
@@ -77,7 +76,7 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
       {
         // Obtain a convolution algorithm appropriate for the input and output
         // shapes. Either by choosing one according to heuristics or by making
-        // CuDNN time every implementation and choose the best one.
+        // cuDNN time every implementation and choose the best one.
         if (CHOOSE_ALGO_TIME)
         {
           // Time the different implementations to choose the best one
@@ -159,6 +158,25 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
         chosen_algo = CONV_ALGO;
     }
 
+    if (0){
+      char * a;
+      switch(chosen_algo){
+      case CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0:
+	a = "algo 0 (0)";
+	break;
+      case CUDNN_CONVOLUTION_BWD_FILTER_ALGO_1:
+	a = "algo 1 (1)";
+	break;
+      case CUDNN_CONVOLUTION_BWD_FILTER_ALGO_FFT:
+	a = "fft (2)";
+	break;
+      case CUDNN_CONVOLUTION_BWD_FILTER_ALGO_3:
+	a = "algo 3 (3)";
+	break;
+      }
+      printf("GpuDNNConvGW: algo %s\n", a);
+    }
+
     // The FFT implementation (only in v3 and onward) does not support strides,
     // 1x1 filters or inputs with a spatial dimension larger than 1024.
     // If the chosen implementation is FFT, validate that it can be used
@@ -168,12 +186,14 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
     {
 
       // Extract the properties of the convolution descriptor
-      int pad_h, pad_w, stride_v, stride_h, upscale_x, upscale_y;
+      int nd;
+      int pad[2];
+      int stride[2];
+      int upscale[2];
       cudnnConvolutionMode_t mode;
-      err = cudnnGetConvolution2dDescriptor(desc, &pad_h, &pad_w,
-                                            &stride_v, &stride_h,
-                                            &upscale_x, &upscale_y,
-                                            &mode);
+      cudnnDataType_t data_type;
+      err = cudnnGetConvolutionNdDescriptor(desc, 2, &nd, pad, stride,
+                                            upscale, &mode, &data_type);
 
       if (err != CUDNN_STATUS_SUCCESS) {
         PyErr_Format(PyExc_RuntimeError,
@@ -183,16 +203,16 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
       }
 
       // Extract the spatial size of the filters
-      int filter_h = CudaNdarray_HOST_DIMS(*kerns)[3];
-      int filter_w = CudaNdarray_HOST_DIMS(*kerns)[4];
+      int filter_h = CudaNdarray_HOST_DIMS(*kerns)[2];
+      int filter_w = CudaNdarray_HOST_DIMS(*kerns)[3];
 
       // Extract the spatial size of the input
-      int input_h = CudaNdarray_HOST_DIMS(input)[3];
-      int input_w = CudaNdarray_HOST_DIMS(input)[4];
+      int input_h = CudaNdarray_HOST_DIMS(input)[2];
+      int input_w = CudaNdarray_HOST_DIMS(input)[3];
 
       // Ensure that the selected implementation supports the requested
       // convolution. Fall back to a safe implementation otherwise.
-      if (stride_v != 1 || stride_h != 1 || input_h > 1024 ||
+      if (stride[0] != 1 || stride[1] != 1 || input_h > 1024 ||
           input_w > 1024 || (filter_h == 1 && filter_w == 1))
       {
         chosen_algo = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0;
@@ -220,7 +240,7 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
       return 1;
 
     // Perform the convolution
-    err = cudnnConvolutionBackwardFilter_v3(
+    err = cudnnConvolutionBackwardFilter(
       _handle,
       (void *)&alpha,
       APPLY_SPECIFIC(input), CudaNdarray_DEV_DATA(input),
@@ -232,16 +252,6 @@ APPLY_SPECIFIC(conv_gw)(CudaNdarray *input, CudaNdarray *output,
       APPLY_SPECIFIC(kerns), CudaNdarray_DEV_DATA(*kerns));
 
   }
-#else
-  err = cudnnConvolutionBackwardFilter(
-    _handle,
-    (void *)&alpha,
-    APPLY_SPECIFIC(input), CudaNdarray_DEV_DATA(input),
-    APPLY_SPECIFIC(output), CudaNdarray_DEV_DATA(output),
-    desc,
-    (void *)&beta,
-    APPLY_SPECIFIC(kerns), CudaNdarray_DEV_DATA(*kerns));
-#endif
 
   if (err != CUDNN_STATUS_SUCCESS) {
     PyErr_Format(PyExc_RuntimeError, "GpuDnnConvGradW: error doing operation: %s",

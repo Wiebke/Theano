@@ -3,6 +3,8 @@ Provide a simple user friendly API to Theano-managed memory.
 
 """
 # Standard imports
+from __future__ import absolute_import, print_function, division
+
 import copy
 import logging
 
@@ -74,8 +76,6 @@ class SharedVariable(Variable):
                 raise TypeError('value and strict are ignored if you pass '
                                 'a container here')
         else:
-            if container is not None:
-                raise TypeError('Error to specify both value and container')
             self.container = Container(
                 self,
                 storage=[type.filter(value, strict=strict,
@@ -200,19 +200,24 @@ def shared_constructor(ctor, remove=False):
 
 
 def shared(value, name=None, strict=False, allow_downcast=None, **kwargs):
-    """
-    Return a SharedVariable Variable, initialized with a copy or
+    """Return a SharedVariable Variable, initialized with a copy or
     reference of `value`.
 
-    This function iterates over
-    :ref:`constructor functions <shared_constructor>`
-    to find a suitable SharedVariable subclass.
-    The suitable one is the first constructor that accept the given value.
+    This function iterates over constructor functions to find a
+    suitable SharedVariable subclass.  The suitable one is the first
+    constructor that accept the given value.  See the documentation of
+    :func:`shared_constructor` for the definition of a contructor
+    function.
 
     This function is meant as a convenient default.  If you want to use a
     specific shared variable constructor, consider calling it directly.
 
     ``theano.shared`` is a shortcut to this function.
+
+    .. attribute:: constructors
+
+    A list of shared variable constructors that will be tried in reverse
+    order.
 
     Notes
     -----
@@ -228,11 +233,6 @@ def shared(value, name=None, strict=False, allow_downcast=None, **kwargs):
     broadcastable, even if ``value`` has a shape of 1 along some dimension.
     This parameter allows you to create for example a `row` or `column` 2d
     tensor.
-
-    .. attribute:: constructors
-
-    A list of shared variable constructors that will be tried in reverse
-    order.
 
     """
 

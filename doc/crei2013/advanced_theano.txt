@@ -104,7 +104,7 @@ Exercise 5
 -----------
 
 - In the last exercises, do you see a speed up with the GPU?
-- Where does it come from? (Use ProfileMode)
+- Where does it come from? (Use profile=True)
 - Is there something we can do to speed up the GPU version?
 
 
@@ -202,7 +202,7 @@ The graph after optimization:
 Picture Printing of Graphs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``pydotprint`` requires graphviz and pydot.
+``pydotprint`` requires graphviz and either pydot or pydot-ng.
 
 The graph before optimization:
 

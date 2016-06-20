@@ -2,7 +2,7 @@
 Driver of graph construction, optimization, and linking.
 
 """
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 
 import copy
 from six import string_types, iteritems, iterkeys
@@ -16,12 +16,11 @@ import numpy
 
 import theano
 from theano import config, gof
-from functools import partial
 from theano.compat import izip
 from theano.gof import graph
 import theano.compile.mode
 from theano.compile.io import (
-    In, SymbolicInput, SymbolicInputKit, SymbolicOutput)
+    In, SymbolicInput, SymbolicOutput)
 from theano.compile.ops import deep_copy_op, view_op
 from theano.gof.graph import is_same_graph
 from theano.gof.op import ops_with_inner_function
@@ -199,7 +198,7 @@ def std_fgraph(input_specs, output_specs, accept_inplace=False):
     return fgraph, list(map(SymbolicOutput, updates))
 
 
-std_fgraph.features = [gof.toolbox.PreserveNames]
+std_fgraph.features = [gof.toolbox.PreserveVariableAttributes]
 
 
 class AliasedMemoryError(Exception):
@@ -242,7 +241,7 @@ class Function(object):
 
     A Function instance may be serialized using the `pickle` or
     `cPickle` modules.  This will save all default inputs, the graph,
-    and *** to the pickle file (WRITEME).
+    and WRITEME to the pickle file.
 
     A Function instance have a ``trust_input`` field that default to
     False. When True, we don't do extra check of the input to give
@@ -286,7 +285,7 @@ class Function(object):
 
     indices = None
     """
-    List of (SymbolicInput|SymbolicInputKit, indices, [SymbolicInput,...]),
+    List of (SymbolicInput, indices, [SymbolicInput,...]),
     one tuple for each input.
 
     The first tuple element is the SymbolicInput object for the corresponding
@@ -396,7 +395,6 @@ class Function(object):
         # self.input_storage inplace.
         for i, ((input, indices, sinputs), (required, refeed, value)) in \
                 enumerate(zip(self.indices, defaults)):
-            # this is true iff input is not a SymbolicInputKit
             if indices is None:
                 # containers is being used as a stack. Here we pop off
                 # the next one.
@@ -432,41 +430,6 @@ class Function(object):
                     named_inputs.append(input.name)
                 inv_finder[c] = input
                 containers[:1] = []
-            else:
-                # TODO The following code may need to do something to handle
-                # implicit inputs.
-
-                # The input is a SymbolicInputKit, so we take as many
-                # containers as the Kit provides inputs
-                cs = containers[:len(indices)]
-                # distribute does the initialization of the containers
-                input.distribute(value, indices, cs)
-                f = partial(distribute, indices, cs)
-                # Like before, we set a finder entry for the kit. Note that
-                # we are not mapping to a container but to a function which
-                # can reinitialize all the containers
-                finder[i] = f
-                finder[input] = f
-                if input.name not in finder:
-                    finder[input.name] = f
-                else:
-                    finder[input.name] = DUPLICATE
-                # For each input in the kit and its corresponding
-                # container, we put an entry in finder.  This allows
-                # the user to micro-manage elements of the kit if need
-                # be.  All containers inherit the required field and
-                # have their own "provided" counter
-                for c, sin in zip(cs, sinputs):
-                    finder[sin.variable] = c
-                    finder[sin.name] = c
-                    if sin.name not in finder:
-                        finder[sin.name] = c
-                    else:
-                        finder[sin.name] = DUPLICATE
-                    inv_finder[c] = input
-                    c.required = required
-                    c.provided = 0
-                containers[:len(indices)] = []
 
         self.finder = finder
         self.inv_finder = inv_finder
@@ -560,29 +523,34 @@ class Function(object):
         Copy this function. Copied function will have separated maker and
         fgraph with original function. User can choose whether to separate
         storage by changing the share_memory arguments.
-        ---------------------
-        Params:
-            share_memory -- { boolean } Default is False. When True, two
-            function share intermediate storages(storages except input and
+
+        Parameters
+        ----------
+        share_memory : boolean
+            When True, two function share intermediate storages(storages except input and
             output storages). Otherwise two functions will only share partial
             storages and same maker. If two functions share memory and
             allow_gc=False, this will increase executing speed and save memory.
 
-            swap -- { dict } Dictionary that map old SharedVariables to new
+        swap : dict
+            Dictionary that map old SharedVariables to new
             SharedVariables. Default is None.
             NOTE: The shared variable swap in only done in the new returned
             function, not in the user graph.
 
-            delete_updates -- { boolean } Default is False. If True, Copied
-            function will not have update.
-
-            name -- { string } If provided, will be the name of the new
+        delete_updates : boolean
+            If True, Copied function will not have updates.
+        name : string
+            If provided, will be the name of the new
             Function. Otherwise, it will be old + " copy"
 
-            profile -- as theano.function profile parameter
-        ---------------------
-        Returns:
-            func -- Copied theano.Function
+        profile :
+            as theano.function profile parameter
+
+        Returns
+        -------
+        theano.Function
+            Copied theano.Function
         """
         # helper function
         def checkSV(sv_ori, sv_rpl):
@@ -709,9 +677,18 @@ class Function(object):
 
         f_cpy = maker.__class__(inputs=ins, outputs=outs, fgraph=fg_cpy,
                                 mode=maker.mode, profile=profile,
-                                on_unused_input=maker.on_unused_input,
+                                # When removing updates containing variables
+                                # not used in the output function, copy
+                                # generates an unused implicit input.
+                                # We ignore the resulting errors,
+                                # but could change it to 'warn' if this might
+                                # cause problems.
+                                on_unused_input='ignore',
                                 function_builder=maker.function_builder,
-                                accept_inplace=maker.accept_inplace
+                                # As this is an optimized graph, it
+                                # can contain inplace. DebugMode check
+                                # that.
+                                accept_inplace=True,
                                 ).create(input_storage,
                                          storage_map=new_storage_map)
 
@@ -745,8 +722,36 @@ class Function(object):
         return f_cpy
 
     def __call__(self, *args, **kwargs):
+        """
+        Evaluates value of a function on given arguments.
+
+        Parameters
+        ----------
+        args : list
+            List of inputs to the function. All inputs are required, even when
+            some of them are not necessary to calculate requested subset of
+            outputs.
+
+        kwargs : dict
+            The function inputs can be passed as keyword argument. For this, use
+            the name of the input or the input instance as the key.
+            Keyword argument ``output_subset`` is a list of either indices of the
+            function's outputs or the keys belonging to the `output_keys` dict
+            and represent outputs that are requested to be calculated.
+
+        Returns
+        -------
+        list
+            List of outputs on indices/keys from ``output_subset`` or all of them,
+            if ``output_subset`` is not passed.
+        """
         profile = self.profile
         t0 = time.time()
+
+        output_subset = kwargs.pop('output_subset', None)
+        if output_subset is not None and self.output_keys is not None:
+            output_subset =\
+                [self.output_keys.index(key) for key in output_subset]
 
         # Reinitialize each container's 'provided' counter
         if self.trust_input:
@@ -780,10 +785,14 @@ class Function(object):
 
                     except Exception as e:
                         function_name = "theano function"
+                        argument_name = "argument"
                         if self.name:
-                            function_name += ' with name "' + self.name + '" '
-                        e.args = ("Bad input argument to " + function_name +
-                                  " at index %d(0-based)" % i,) + e.args
+                            function_name += ' with name "' + self.name + '"'
+                        if hasattr(arg, 'name') and arg.name:
+                            argument_name += ' with name "' + arg.name + '"'
+                        e.args = ("Bad input " + argument_name + " to " +
+                                  function_name + " at index %d (0-based)"
+                                  % i,) + e.args
                         raise
                 s.provided += 1
                 i += 1
@@ -849,7 +858,9 @@ class Function(object):
         # Do the actual work
         t0_fn = time.time()
         try:
-            outputs = self.fn()
+            outputs =\
+                self.fn() if output_subset is None else\
+                self.fn(output_subset=output_subset)
         except Exception:
             if hasattr(self.fn, 'position_of_error'):
                 # this is a new vm-provided function or c linker
@@ -921,10 +932,13 @@ class Function(object):
             profile.fct_call_time += dt_call
             if hasattr(self.fn, 'update_profile'):
                 self.fn.update_profile(profile)
-
+            if profile.ignore_first_call:
+                profile.reset()
+                profile.ignore_first_call = False
         if self.return_none:
             return None
-        elif self.unpack_single and len(outputs) == 1:
+        elif self.unpack_single and len(outputs) == 1 and\
+                output_subset is None:
             return outputs[0]
         else:
 
@@ -932,9 +946,16 @@ class Function(object):
 
                 assert len(self.output_keys) == len(outputs)
 
-                return dict(izip(self.output_keys, outputs))
+                if output_subset is None:
+                    return dict(izip(self.output_keys, outputs))
+                else:
+                    return dict((self.output_keys[index], outputs[index])
+                                for index in output_subset)
 
-            return outputs
+            if output_subset is None:
+                return outputs
+            else:
+                return [outputs[i] for i in output_subset]
 
     value = property(
         lambda self: self._value,
@@ -960,9 +981,14 @@ class Function(object):
             for node in self.nodes_with_inner_function:
                 ops_with_inner_function[node.op].free()
 
+    def get_shared(self):
+        """
+        Return the shared variable read or updated by by this function.
+        """
+        return [i.variable for i in self.maker.inputs if i.implicit]
+
 
 # pickling/deepcopy support for Function
-
 def _pickle_Function(f):
     # copy of the input storage list
     ins = list(f.input_storage)
@@ -970,16 +996,8 @@ def _pickle_Function(f):
 
     for (input, indices, inputs), (required, refeed, default) in \
             zip(f.indices, f.defaults):
-        if isinstance(input, SymbolicInputKit):
-            li = len(indices)
-            if not default:
-                input_storage.append(ins[:li])
-            else:
-                input_storage.append(default)
-            ins[:li] = []
-        else:
-            input_storage.append(ins[0])
-            del ins[0]
+        input_storage.append(ins[0])
+        del ins[0]
 
     inputs_data = [x.data for x in f.input_storage]
 
@@ -1147,7 +1165,7 @@ class FunctionMaker(object):
 
     @staticmethod
     def wrap_in(input):
-        if isinstance(input, (SymbolicInput, SymbolicInputKit)):
+        if isinstance(input, (SymbolicInput)):
             return input
         elif isinstance(input, gof.Variable):
             # r -> SymbolicInput(variable=r)
@@ -1171,9 +1189,10 @@ class FunctionMaker(object):
         # instances in inputs.  For SymbolicInput, this returns None
         # as the list of indices and a list with just the
         # SymbolicInput.
-        if isinstance(sinput, SymbolicInputKit):
-            return sinput.complete(rinputs)
-        elif isinstance(sinput, SymbolicInput):
+        # if isinstance(sinput, SymbolicInputKit):
+        #    return sinput.complete(rinputs)
+        # elif isinstance(sinput, SymbolicInput):
+        if isinstance(sinput, SymbolicInput):
             return [None, [sinput]]
 
     @staticmethod
@@ -1207,22 +1226,17 @@ class FunctionMaker(object):
                 print('graph_db already exists')
             else:
                 # create graph_db
-                f = open(graph_db_file, 'wb')
-                print('create new graph_db in %s' % graph_db_file)
-                # file needs to be open and closed for every pickle
-                f.close()
+                with open(graph_db_file, 'wb') as f:
+                    print('create new graph_db in %s' % graph_db_file)
             # load the graph_db dictionary
             try:
-                f = open(graph_db_file, 'rb')
-                # Temporary hack to allow
-                # theano.scan_module.tests.test_scan.T_Scan to
-                # finish. Should be changed in definitive version.
-                tmp = theano.config.unpickle_function
-                theano.config.unpickle_function = False
-                graph_db = pickle.load(f)
-
-                # hack end
-                f.close()
+                with open(graph_db_file, 'rb') as f:
+                    # Temporary hack to allow
+                    # theano.scan_module.tests.test_scan.T_Scan to
+                    # finish. Should be changed in definitive version.
+                    tmp = theano.config.unpickle_function
+                    theano.config.unpickle_function = False
+                    graph_db = pickle.load(f)
                 print('graph_db loaded and it is not empty')
             except EOFError as e:
                 # the file has nothing in it
@@ -1351,9 +1365,8 @@ class FunctionMaker(object):
             before_opt = self.fgraph.clone(check_integrity=False)
             optimizer_profile = optimizer(self.fgraph)
             graph_db.update({before_opt: self.fgraph})
-            f = open(graph_db_file, 'wb')
-            pickle.dump(graph_db, f, -1)
-            f.close()
+            with open(graph_db_file, 'wb') as f:
+                pickle.dump(graph_db, f, -1)
             print('new graph saved into graph_db')
         release_lock()
         return optimizer_profile
@@ -1439,7 +1452,7 @@ class FunctionMaker(object):
                 # optimize the fgraph
                 theano.config.compute_test_value = \
                     theano.config.compute_test_value_opt
-                theano.config.traceback.limit = 0
+                theano.config.traceback.limit = theano.config.traceback.compile_limit
                 start_optimizer = time.time()
 
                 # now optimize the graph
@@ -1456,6 +1469,10 @@ class FunctionMaker(object):
                     if theano.config.profile_optimizer:
                         profile.optimizer_profile = (optimizer,
                                                      optimizer_profile)
+                elif theano.config.profile_optimizer:
+                    warnings.warn((
+                        "config.profile_optimizer requires config.profile to "
+                        " be set to True as well"), stacklevel=3)
                 _logger.debug('Optimizing took %f seconds', opt_time)
 
                 # Add deep copy to respect the memory interface
@@ -1497,7 +1514,7 @@ class FunctionMaker(object):
         self.mode = mode
         self.accept_inplace = accept_inplace
         self.function_builder = function_builder
-        self.on_unused_input = on_unused_input  # Used only for the pickling
+        self.on_unused_input = on_unused_input  # Used for the pickling/copy
         self.output_keys = output_keys
 
         self.required = [(i.value is None) for i in self.inputs]
@@ -1626,7 +1643,7 @@ class FunctionMaker(object):
         start_import_time = theano.gof.cmodule.import_time
         limit_orig = theano.config.traceback.limit
         try:
-            theano.config.traceback.limit = 0
+            theano.config.traceback.limit = theano.config.traceback.compile_limit
             _fn, _i, _o = self.linker.make_thunk(
                 input_storage=input_storage_lists, storage_map=storage_map)
         finally:
@@ -1797,7 +1814,7 @@ def convert_function_input(input):
       `In`(r, name=name, value=val, update=up, autoname=True)
 
     """
-    if isinstance(input, (SymbolicInput, SymbolicInputKit)):
+    if isinstance(input, SymbolicInput):
         return input
     elif isinstance(input, gof.Constant):
         raise TypeError('A Constant instance is not a legal function input',
@@ -1826,7 +1843,7 @@ def convert_function_input(input):
             else:
                 raise TypeError("Invalid input syntax: %s (check "
                                 "documentation or use an In instance)" % orig)
-        elif isinstance(input[0], (SymbolicInput, SymbolicInputKit)):
+        elif isinstance(input[0], SymbolicInput):
             if len(input) == 1:
                 return input[0]
             elif len(input) == 2:

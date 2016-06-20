@@ -1,8 +1,8 @@
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 import copy
 import logging
 import sys
-
+import warnings
 import numpy
 from six import iteritems
 from six.moves import StringIO, xrange
@@ -12,6 +12,9 @@ from theano import gof, Type, Apply
 from theano import tensor, scalar, config
 from theano.gradient import grad_undefined
 from theano.scalar import Scalar
+from theano.sandbox.cuda import GpuOp
+from theano.sandbox.cuda.type import CudaNdarrayType
+from theano.sandbox.cuda.elemwise import NaiveAlgo
 
 scal = scalar  # somewhere scalar gets reassigned to be a function
 
@@ -23,10 +26,6 @@ try:
     import cuda_ndarray
 except ImportError:
     pass
-
-from theano.sandbox.cuda import GpuOp
-from theano.sandbox.cuda.type import CudaNdarrayType
-from theano.sandbox.cuda.elemwise import NaiveAlgo
 
 
 _logger_name = 'theano.sandbox.cuda.basic_ops'
@@ -79,7 +78,7 @@ class HostFromGpu(GpuOp):
                             "CudaNdarrayType. Got %s with type %s" % (x,
                                                                       x.type))
         return Apply(self, [x], [tensor.TensorType(dtype=x.dtype,
-                                    broadcastable=x.broadcastable)()])
+                                 broadcastable=x.broadcastable)()])
 
     def perform(self, node, inp, out):
         x, = inp
@@ -92,10 +91,7 @@ class HostFromGpu(GpuOp):
 
     def R_op(self, inputs, eval_points):
         ev, = eval_points
-        if isinstance(ev, tensor.TensorType):
-            return [gpu_from_host(ev)]
-        else:
-            return [ev]
+        return [self(ev)]
 
     def infer_shape(self, node, xshp):
         return xshp
@@ -155,10 +151,7 @@ class GpuFromHost(GpuOp):
 
     def R_op(self, inputs, eval_points):
         ev, = eval_points
-        if isinstance(ev, CudaNdarrayType):
-            return [host_from_gpu(ev)]
-        else:
-            return [ev]
+        return [self(ev)]
 
     def infer_shape(self, node, xshp):
         return xshp
@@ -541,10 +534,10 @@ class GpuCAReduce(GpuOp):
 
     Parameters
     ----------
-    pre_scalar_op 
+    pre_scalar_op
         If present, must be a scalar op with only 1 input.
         We will execute it on the input value before reduction.
-    
+
     Notes
     -----
     This Op is a work in progress.
@@ -602,10 +595,8 @@ class GpuCAReduce(GpuOp):
         if self.pre_scalar_op:
             pre = "pre=%s,red=" % str(self.pre_scalar_op)
         return "GpuCAReduce{%s%s}{%s}" % (
-                pre,
-                str(self.scalar_op),
-                ','.join(str(i) for i in self.reduce_mask)
-                )
+            pre, str(self.scalar_op),
+            ','.join(str(i) for i in self.reduce_mask))
 
     def __setstate__(self, d):
         self.__dict__.update(d)
@@ -749,7 +740,6 @@ class GpuCAReduce(GpuOp):
             %(z)s = (CudaNdarray*) CudaNdarray_NewDims(%(nd_out)s, new_dims);
             if (NULL == %(z)s)
             {
-                PyErr_Format(PyExc_RuntimeError, "Failed to allocate output");
                 %(fail)s;
             }
         }
@@ -782,15 +772,18 @@ class GpuCAReduce(GpuOp):
             # check if the tensor is ccontiguous, if true, use the c_code_reduce_ccontig code.
             # TODO: check if we are ccontiguous when we un-dimshuffle
             # TODO: if only some dims are ccontiguous, call version with less dims.
-            print('if(CudaNdarray_is_c_contiguous(%(x)s)){'%locals(), file=sio)
+            print('if(CudaNdarray_is_c_contiguous( %(x)s)){' % locals(),
+                  file=sio)
             self.c_code_reduce_ccontig(sio, node, name, x, z, fail)
             print("}else{", file=sio)
-            getattr(self, 'c_code_reduce_%s'%(''.join(
-                str(i) for i in self.reduce_mask)))(sio, node, name, x, z, fail)
+            getattr(self, 'c_code_reduce_%s' % (''.join(
+                str(i) for i in self.reduce_mask)))(
+                    sio, node, name, x, z, fail)
             print("}", file=sio)
         else:
-            getattr(self, 'c_code_reduce_%s'%(''.join(
-                str(i) for i in self.reduce_mask)))(sio, node, name, x, z, fail)
+            getattr(self, 'c_code_reduce_%s' % (''.join(
+                str(i) for i in self.reduce_mask)))(
+                    sio, node, name, x, z, fail)
 
         # \end bracket the reduction ...
         print("""
@@ -983,7 +976,7 @@ class GpuCAReduce(GpuOp):
             assert isinstance(self.scalar_op, (scal.Maximum,
                                                scal.Minimum))
             if self.pre_scalar_op:
-                #dtype = node.inputs[0].dtype
+                # dtype = node.inputs[0].dtype
                 dtype = 'float32'
 
                 dummy_var = scal.Scalar(dtype=dtype)()
@@ -1282,7 +1275,7 @@ class GpuCAReduce(GpuOp):
 
     def c_code_reduce_01X(self, sio, node, name, x, z, fail, N):
         """
-        
+
         Parameters
         ----------
         N : int
@@ -1838,15 +1831,18 @@ class GpuCAReduce(GpuOp):
         """ % locals(), file=sio)
 
     def c_code_cache_version_apply(self, node):
-        version = [13]  # the version corresponding to the c code in this Op
+        version = [15]  # the version corresponding to the c code in this Op
 
         # now we insert versions for the ops on which we depend...
-        scalar_node = Apply(self.scalar_op,
-                [Scalar(dtype=input.type.dtype)() for input in node.inputs],
-                [Scalar(dtype=output.type.dtype)() for output in node.outputs])
+        Apply(self.scalar_op,
+              [Scalar(
+                  dtype=input.type.dtype)() for input in node.inputs],
+              [Scalar(
+                  dtype=output.type.dtype)() for output in node.outputs])
         version.extend(self.scalar_op.c_code_cache_version())
         for i in node.inputs + node.outputs:
-            version.extend(Scalar(dtype=i.type.dtype).c_code_cache_version())
+            version.extend(
+                Scalar(dtype=i.type.dtype).c_code_cache_version())
         if all(version):
             return tuple(version)
         else:
@@ -1953,10 +1949,11 @@ class GpuCAReduce(GpuOp):
                 %(reducebuf)s
             }
             """ % locals(), file=sio)
-        #01, 011, 0111
+        # 01, 011, 0111
         if (0 == self.reduce_mask[0] and
-            all(self.reduce_mask[1:]) and
-            nd_in in[2, 3, 4]):
+                all(self.reduce_mask[1:]) and
+                nd_in in[2, 3, 4]):
+
             # this kernel uses one block for each row.
             # threads per block for each element per row.
 
@@ -2124,10 +2121,10 @@ class GpuCAReduce(GpuOp):
             # this kernel uses one block for multiple column(up to 32TODO),
             # threads per block for each element per column.
 
-# thread.x = dim 2 contiguous
-# thread.y = dim 1
-# block.x = dim 0
-# block.y = dim 1 rest
+            # thread.x = dim 2 contiguous
+            # thread.y = dim 1
+            # block.x = dim 0
+            # block.y = dim 1 rest
             init = self._k_init(node, nodename)
             decl = self._k_decl(node, nodename, pattern="010_inner")
             reducebuf = self._k_reduce_buf_multiple('Z[i0 * sZ0 + i2*sZ1]',
@@ -2170,7 +2167,7 @@ class GpuCAReduce(GpuOp):
             #      memory (a segment of a column).
             reducebuf = self._k_reduce_buf('Z[blockIdx.x * sZ0]', node, nodename, sub={})
             reduce_fct = self._assign_reduce(node, nodename, "myresult",
-                                             "A[i0 * sA0 + i1 * sA1 + blockIdx.x * sA2]",
+                                             "A[i0 * sA0 + i1 * sA1 + ((int)blockIdx.x) * sA2]",
                                              {}, True)
             reduce_init = self._assign_init("A[blockIdx.x * sA2]")
             print("""
@@ -2301,7 +2298,7 @@ class GpuCAReduce(GpuOp):
             }
             """ % locals(), file=sio)
         if self.reduce_mask == (0, 0, 1, 1):
-             # this kernel uses one block for each row,
+            # this kernel uses one block for each row,
             # threads per block for each element per row.
             reducebuf = self._k_reduce_buf('Z[i0 * sZ0 + i1 * sZ1]',
                                            node, nodename, sub={})
@@ -2443,7 +2440,7 @@ class GpuReshape(tensor.Reshape, GpuOp):
 
     """
 
-    # __hash__, __eq__, __str__ come from tensor.Subtensor
+    # __hash__, __eq__, __str__ come from tensor.Reshape
     def make_node(self, x, shp):
         x = as_cuda_ndarray_variable(x)
         shp = tensor.as_tensor_variable(shp)
@@ -2477,7 +2474,7 @@ class GpuReshape(tensor.Reshape, GpuOp):
                 if (x.size % ss) != 0:
                     raise ValueError("When using -1 in new shape, the computed new shape must be an multiple of the original shape.")
                 shp_new = numpy.copy(shp)
-                shp_new[m1_idx] = x.size/ss
+                shp_new[m1_idx] = x.size / ss
                 shp = shp_new
 
             else:
@@ -2717,8 +2714,8 @@ class GpuAdvancedSubtensor1(tensor.AdvancedSubtensor1, GpuOp):
             raise TypeError('cannot index into a scalar')
 
         # c code suppose it is int64
-        if x.ndim in [2, 3] and ilist_.dtype in [
-            'int8', 'int16', 'int32', 'uint8', 'uint16', 'uint32']:
+        if x.ndim in [1, 2, 3] and ilist_.dtype in [
+                'int8', 'int16', 'int32', 'uint8', 'uint16', 'uint32']:
             ilist_ = tensor.cast(ilist_, 'int64')
 
         bcast = (ilist_.broadcastable[0],) + x_.broadcastable[1:]
@@ -2728,7 +2725,7 @@ class GpuAdvancedSubtensor1(tensor.AdvancedSubtensor1, GpuOp):
 
     def perform(self, node, inp, out_):
         # This don't work as CudaNdarray_Subscript() don't support it.
-        #super(GpuAdvancedSubtensor1, self).perform(node, inp, out_)
+        # super(GpuAdvancedSubtensor1, self).perform(node, inp, out_)
         x, idx = inp
         out, = out_
         x_orig = x
@@ -2740,7 +2737,7 @@ class GpuAdvancedSubtensor1(tensor.AdvancedSubtensor1, GpuOp):
         if x.ndim <= 3:
             # CudaNdarray.take only supports ndim <= 3
             if self.perform_using_take is not None:
-                assert self.perform_using_take == True, (
+                assert self.perform_using_take is True, (
                     "GpuAdvancedSubtensor1 used the fast version")
             if idx.dtype != numpy.int64:
                 if idx.dtype in [numpy.int8, numpy.int16, numpy.int32,
@@ -2769,7 +2766,7 @@ class GpuAdvancedSubtensor1(tensor.AdvancedSubtensor1, GpuOp):
             out[0] = o
         else:
             if self.perform_using_take is not None:
-                assert self.perform_using_take == False, (
+                assert self.perform_using_take is False, (
                     "GpuAdvancedSubtensor1 didn't use the fast version")
             if out_[0][0] is None or out_[0][0].shape != out_shape:
                 o = cuda_ndarray.cuda_ndarray.CudaNdarray.zeros(out_shape)
@@ -2783,7 +2780,7 @@ class GpuAdvancedSubtensor1(tensor.AdvancedSubtensor1, GpuOp):
         x, idx = inputs
         out, = outputs
         fail = sub['fail']
-        if node.inputs[0].ndim not in [2, 3]:
+        if node.inputs[0].ndim not in [1, 2, 3]:
             raise NotImplementedError("This case does not have C code yet.")
         if node.inputs[1].dtype != 'int64':
             raise Exception("Index should have dtype int64. Check this node make_node().")
@@ -2895,11 +2892,10 @@ class GpuAdvancedIncSubtensor1(tensor.AdvancedIncSubtensor1, GpuOp):
         out[0] = x
 
     def c_code_cache_version(self):
-        return (5,)
+        return (8,)
 
     def c_code(self, node, name, inputs, outputs, sub):
-        if (self.set_instead_of_inc) or \
-           (node.inputs[0].ndim != node.inputs[1].ndim):
+        if (node.inputs[0].ndim != node.inputs[1].ndim):
             raise NotImplementedError("This case does not have C code yet.")
 
         x = inputs[0]
@@ -2908,6 +2904,7 @@ class GpuAdvancedIncSubtensor1(tensor.AdvancedIncSubtensor1, GpuOp):
         out = outputs[0]
         fail = sub['fail']
         inplace = int(self.inplace)
+        set_instead_of_inc = int(self.set_instead_of_inc)
 
         return """
         PyObject *row_x, *row_y;
@@ -2958,7 +2955,7 @@ class GpuAdvancedIncSubtensor1(tensor.AdvancedIncSubtensor1, GpuOp):
              } else {
                  y_rowind_obj = PyInt_FromLong(j);
              }
-             row_y = CudaNdarray_Subscript(py_%(y)s, y_rowind_obj);
+             row_y = CudaNdarray_Subscript((PyObject*)%(y)s, y_rowind_obj);
 
              if (row_y == NULL) {
                   Py_XDECREF(row_y);
@@ -2967,8 +2964,11 @@ class GpuAdvancedIncSubtensor1(tensor.AdvancedIncSubtensor1, GpuOp):
                   Py_XDECREF(x_rowind_obj);
                   %(fail)s;
              }
-
-             ret = CudaNdarray_inplace_elemwise(row_x, row_y, IADD);
+             if (%(set_instead_of_inc)s) {
+                 ret = CudaNdarray_CopyFromCudaNdarray((CudaNdarray *) row_x, (CudaNdarray *) row_y, 1);
+             } else {
+                 ret = CudaNdarray_inplace_elemwise(row_x, row_y, IADD);
+             }
              if (ret != 0) {
                  Py_XDECREF(row_y);
                  Py_XDECREF(row_x);
@@ -3010,9 +3010,8 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
         convert_map = {8: tensor.basic._convert_to_int8,
                        16: tensor.basic._convert_to_int16,
                        32: tensor.basic._convert_to_int32,
-                       64: tensor.basic._convert_to_int64
-        }
-        intwidth = theano.gof.compiledir.python_int_bitwidth()
+                       64: tensor.basic._convert_to_int64}
+        intwidth = theano.configdefaults.python_int_bitwidth()
         ilist_ = convert_map[intwidth](ilist_)
 
         assert x_.type.dtype == y_.type.dtype
@@ -3037,15 +3036,14 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
         return Apply(self, [x_, y_, ilist_], [x_.type()])
 
     def c_code_cache_version(self):
-        return (6,)
+        return (7,)
 
     def c_code(self, node, name, inputs, outputs, sub):
         active_device_no = theano.sandbox.cuda.active_device_number()
         compute_capability = device_properties(active_device_no)['major']
-        if ((self.set_instead_of_inc) or
-            (node.inputs[0].ndim != node.inputs[1].ndim) or
-            (node.inputs[0].ndim != 2) or
-            (compute_capability < 2)):
+        if ((node.inputs[0].ndim != node.inputs[1].ndim) or
+                (node.inputs[0].ndim != 2) or
+                (compute_capability < 2)):
             raise NotImplementedError("This case does not have C code yet.")
 
         x = inputs[0]
@@ -3054,6 +3052,7 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
         out = outputs[0]
         fail = sub['fail']
         inplace = int(self.inplace)
+        set_instead_of_inc = int(self.set_instead_of_inc)
         return """
         Py_XDECREF(%(out)s);
         if (!%(inplace)s) {
@@ -3063,7 +3062,7 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
             Py_XINCREF(%(out)s);
         }
 
-        if (CudaNdarray_vector_add_fast(%(out)s, %(y)s, %(ind)s) != 0){
+        if (CudaNdarray_vector_add_or_replace_fast(%(out)s, %(y)s, %(ind)s, %(set_instead_of_inc)s) != 0){
             %(fail)s
         }
 
@@ -3075,7 +3074,7 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
     def c_support_code_apply(self, node, nodename):
         return """
 
-        __global__ void k_vector_add_fast(int numRowsX,
+        __global__ void k_vector_add_or_replace_fast(int numRowsX,
                                           int numColsX,
                                           int stridesX0,
                                           int stridesX1,
@@ -3087,6 +3086,7 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
                                           float *Y ,
                                           long *d_indices_arr,
                                           int num,
+                                          const int set_instead_of_inc,
                                           int* err)
         {
              for (int i = (blockIdx.x); i < num; i += gridDim.x)
@@ -3098,8 +3098,13 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
                           x_row += numRowsX;
                       int y_row = i;
                       if(x_row < numRowsX && x_row >= 0){
-                        atomicAdd(&X[(x_row * stridesX0) + (j * stridesX1)],
+                        if(set_instead_of_inc){
+                            atomicExch(&X[(x_row * stridesX0) + (j * stridesX1)],
                                   Y[(y_row * stridesY0) + (j * stridesY1)]);
+                        } else{
+                            atomicAdd(&X[(x_row * stridesX0) + (j * stridesX1)],
+                                  Y[(y_row * stridesY0) + (j * stridesY1)]);
+                        }
                       } else {
                         *err = 1;
                       }
@@ -3108,8 +3113,9 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
              return;
         }
 
-        int CudaNdarray_vector_add_fast(CudaNdarray* py_self,
-            CudaNdarray* py_other, PyArrayObject *indices_arr)
+        int CudaNdarray_vector_add_or_replace_fast(CudaNdarray* py_self,
+            CudaNdarray* py_other, PyArrayObject *indices_arr,
+            const int set_instead_of_inc)
         {
             if(init_err_var()!= 0) return -1;
 
@@ -3151,7 +3157,7 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
                 return -1;
             }
 
-            k_vector_add_fast<<<n_blocks, n_threads>>>(
+            k_vector_add_or_replace_fast<<<n_blocks, n_threads>>>(
                 shapeX[0],
                 shapeX[1],
                 strX[0],
@@ -3164,6 +3170,7 @@ class GpuAdvancedIncSubtensor1_dev20(GpuAdvancedIncSubtensor1):
                 CudaNdarray_DEV_DATA(py_other),
                 d_indices_arr,
                 PyArray_SIZE(indices_arr),
+                set_instead_of_inc,
                 err_var
             );
             int index_err = check_err_var();
@@ -3208,7 +3215,7 @@ class GpuIncSubtensor(tensor.IncSubtensor, GpuOp):
         return Apply(self, [x, y] + rval.inputs[2:], [x.type()])
 
     def do_type_checking(self, node):
-        """ 
+        """
         Should raise NotImplementedError if c_code does not support
         the types involved in this node.
 
@@ -3244,7 +3251,7 @@ class GpuIncSubtensor(tensor.IncSubtensor, GpuOp):
         """
 
         Parameters
-        ----------        
+        ----------
         x : str
             A string identifying an array to be viewed.
         view_ndim : str
@@ -3309,7 +3316,7 @@ class GpuIncSubtensor(tensor.IncSubtensor, GpuOp):
 
         return """
         PyObject * add_result = CudaNdarray_inplace_add((PyObject *) zview,
-                                                        (PyObject *) py_%(x)s);
+                                                        (PyObject *) %(x)s);
 
         if (! add_result )
         {
@@ -3325,7 +3332,7 @@ class GpuIncSubtensor(tensor.IncSubtensor, GpuOp):
     def c_code_cache_version(self):
         parent_version = super(GpuIncSubtensor, self).c_code_cache_version()
         if parent_version:
-            return parent_version + (1,)
+            return parent_version + (2,)
         return ()
 
 
@@ -3333,7 +3340,14 @@ class GpuFlatten(gof.HideC, tensor.Flatten, GpuOp):
     """
     Implement Flatten on the gpu.
 
+    .. note:: The interface GpuFlatten is deprecated, you should use gpu_flatten.
     """
+    def __init__(self):
+        warnings.warn(
+            "GpuFlatten class is deprecated, "
+            "please use gpu_flatten method instead.",
+            DeprecationWarning,
+            stacklevel=4)
 
     def make_node(self, x):
         assert isinstance(x.type, CudaNdarrayType)
@@ -3341,6 +3355,35 @@ class GpuFlatten(gof.HideC, tensor.Flatten, GpuOp):
         host_out_broadcastable = rval.outputs[0].type.broadcastable
         out_type = CudaNdarrayType(broadcastable=host_out_broadcastable)
         return Apply(self, [x], [out_type()])
+
+
+def gpu_flatten(x, outdim=1):
+    """
+    Implement flatten on the gpu.
+    Reshapes the variable x by keeping
+    the first outdim-1 dimension size(s) of x the same,
+    and making the last dimension size of x equal to
+    the multiplication of its remaining dimension size(s).
+
+    Parameters
+    ----------
+        x : theano.tensor.var.TensorVariable
+            the variable that should be reshaped.
+
+        outdim : int
+            the number of dimensions of the returned variable
+
+    Returns
+    -------
+    theano.tensor.var.TensorVariable
+        the flattend variable with dimensionality of outdim
+    """
+    x = as_cuda_ndarray_variable(x)
+    if outdim > 1:
+        dims = tuple(x.shape[:outdim - 1]) + (-1, )
+    else:
+        dims = (-1, )
+    return GpuReshape(outdim)(x, dims)
 
 
 class GpuShape(tensor.Shape, GpuOp):
@@ -3367,12 +3410,11 @@ class GpuJoin(tensor.Join, GpuOp):
         as_tensor_variable_args = [as_cuda_ndarray_variable(x)
                                    for x in tensors]
 
-        output_maker = \
-                lambda bcast: CudaNdarrayType(broadcastable=bcast)()
+        def output_maker(bcast):
+            return(CudaNdarrayType(broadcastable=bcast)())
 
-        return tensor.Join._make_node_internal(self,
-                        axis, tensors,
-                        as_tensor_variable_args, output_maker)
+        return tensor.Join._make_node_internal(
+            self, axis, tensors, as_tensor_variable_args, output_maker)
 
     def perform(self, node, axis_and_tensors, out_):
         out, = out_
@@ -3423,8 +3465,8 @@ class GpuJoin(tensor.Join, GpuOp):
         # except for 'axis'
 
         def construct_slices(curlen):
-            slices = [slice(None, None, None) for i in \
-                            xrange(len(template_shape))]
+            slices = [slice(None, None, None) for i in
+                      xrange(len(template_shape))]
             slices[axis] = slice(curpos, curpos + curlen, None)
             return tuple(slices)
 
@@ -3628,7 +3670,7 @@ class GpuAllocEmpty(GpuOp):
                 const_shp = tensor.get_scalar_constant_value(s)
             except tensor.NotScalarConstantError:
                 const_shp = None
-            bcast.append(numpy.all(1 == const_shp))
+            bcast.append(1 == const_shp)
         otype = CudaNdarrayType(dtype='float32', broadcastable=bcast)
         output = otype()
         return sh, output
@@ -3639,7 +3681,15 @@ class GpuAllocEmpty(GpuOp):
         # The outut can contain nan/inf.  output.type is a new
         # instance, so we can do this only for that variable.
         output.type.filter_checks_isfinite = False
+        output.tag.nan_guard_mode_check = False
         return Apply(self, shape, [output])
+
+    def debug_perform(self, node, inputs, out_):
+        self.perform(node, inputs, out_)
+        # __setitem__ is limited on CudaNdarray
+        tmp = numpy.empty(out_[0][0].shape, dtype='float32')
+        tmp.fill(-123456789)
+        out_[0][0][:] = tmp
 
     def perform(self, node, inputs, out_):
         out, = out_
@@ -3720,6 +3770,10 @@ class GpuAlloc(GpuAllocEmpty):
         shape, output = self.validate_shape(shape)
         return Apply(self, [v] + shape, [output])
 
+    # This is required because the superclass (GpuAllocEmpty) also has it.
+    def debug_perform(self, node, inputs, out_):
+        self.perform(node, inputs, out_)
+
     def perform(self, node, inputs, out_):
         # the super class (GpuAllocEmpty) allocates memory, we fill it
         value = inputs[0]
@@ -3776,23 +3830,22 @@ class GpuAlloc(GpuAllocEmpty):
                 # If the output is a constant, it will have to be deepcopied
                 # each time the function is called.  So we do not fold.
                 return False
-            elif (  # The following ops work inplace of their input id 0.
-                  client[1] == 0 and
-                  isinstance(client[0].op, (
-                    # Ops that will work inplace on the Alloc. So if they
-                    # get constant_folded, they would copy the
-                    # constant and this is less efficients.
+            # Else if the following ops work inplace of their input id 0.
+            elif(client[1] == 0 and
+                 isinstance(client[0].op, (
+                     # Ops that will work inplace on the Alloc. So if they
+                     # get constant_folded, they would copy the
+                     # constant and this is less efficients.
 
-                    # Not doing the constant folding could also lower
-                    # the peak memory usage, as we the "constant" won't
-                    # always exists.
-                      # theano.tensor.subtensor.AdvancedIncSubtensor,
-                      GpuIncSubtensor,
-                      GpuAdvancedIncSubtensor1,
-                      theano.sandbox.cuda.blas.GpuGemm,
-                      theano.sandbox.cuda.blas.GpuGemv,
-                      theano.sandbox.cuda.blas.GpuGer,
-                  ))):
+                     # Not doing the constant folding could also lower
+                     # the peak memory usage, as we the "constant" won't
+                     # always exists.
+                     # theano.tensor.subtensor.AdvancedIncSubtensor,
+                     GpuIncSubtensor,
+                     GpuAdvancedIncSubtensor1,
+                     theano.sandbox.cuda.blas.GpuGemm,
+                     theano.sandbox.cuda.blas.GpuGemv,
+                     theano.sandbox.cuda.blas.GpuGer,))):
                 return False
             # If the clients is a transfer, we don't want to fold. We
             # let the moving opt finish before deciding what to do.
@@ -3806,7 +3859,7 @@ gpu_alloc = GpuAlloc()
 class CopyOnNegativeStrides(GpuOp):
     """
     Checks if the input has contains negative strides.
-    
+
     If it does, returns a c contiguous copy.
 
     """
@@ -3964,7 +4017,7 @@ def scalar(name=None, dtype=None):
 
     Parameters
     ----------
-    dtype 
+    dtype
         Numeric type (None means to use theano.config.floatX).
     name : str
         A name to attach to this variable.

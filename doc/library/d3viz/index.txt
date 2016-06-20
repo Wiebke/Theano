@@ -1,10 +1,10 @@
 .. _libdoc_d3viz:
 
-============================================================================
+=========================================================================
 :mod:`d3viz` -- d3viz: Interactive visualization of Theano compute graphs
-============================================================================
+=========================================================================
 
-.. module:: d3viz
+.. module:: theano.d3viz
    :platform: Unix, Windows
    :synopsis: Allows to interactively visualize Theano compute graphs
 .. moduleauthor:: Christof Angermueller
@@ -17,11 +17,14 @@ Requirements
 ------------
 
 ``d3viz`` requires the `pydot <https://pypi.python.org/pypi/pydot>`__
-package, which can be installed with ``pip``:
+package. `pydot-ng <https://github.com/pydot/pydot-ng>`__ fork is better
+maintained, and it works both in Python 2.x and 3.x. Install it with pip::
 
-::
+    pip install pydot-ng
 
-    pip install pydot
+Like Theano’s `printing module
+<http://deeplearning.net/software/theano/library/printing.html>`__, ``d3viz``
+requires `graphviz <http://www.graphviz.org/>`__ binary to be available.
 
 Overview
 --------
@@ -109,7 +112,7 @@ the the :py:mod:`theano.d3viz.d3viz` module, which can be called as before:
     import theano.d3viz as d3v
     d3v.d3viz(predict, 'examples/mlp.html')
 
-`Open visualization! <../../_static/mlp.html>`_
+`Open visualization! <../../_static/mlp.html>`__
 
 When you open the output file ``mlp.html`` in your web-browser, you will
 see an interactive visualization of the compute graph. You can move the
@@ -122,6 +125,19 @@ dealing with a complex graph with many nodes, the default node layout
 may not be perfect. In this case, you can press the ``Release node``
 button in the top-left corner to automatically arrange nodes. To reset
 nodes to their default position, press the ``Reset nodes`` button.
+
+You can also display the interactive graph inline in
+IPython using ``IPython.display.IFrame``:
+
+.. code:: python
+
+    from IPython.display import IFrame
+    d3v.d3viz(predict, 'examples/mlp.html')
+    IFrame('examples/mlp.html', width=700, height=500)
+
+Currently if you use display.IFrame you still have to create a file,
+and this file can't be outside notebooks root (e.g. usually it can't be
+in /tmp/).
 
 Profiling
 ---------
@@ -150,7 +166,7 @@ random data:
 
     d3v.d3viz(predict_profiled, 'examples/mlp2.html')
 
-`Open visualization! <../../_static/mlp2.html>`_
+`Open visualization! <../../_static/mlp2.html>`__
 
 When you open the HTML file in your browser, you will find an additional
 ``Toggle profile colors`` button in the menu bar. By clicking on it,
@@ -213,7 +229,7 @@ defines a nested graph, which will be visualized accordingly by
 
     d3v.d3viz(f, 'examples/ofg.html')
 
-`Open visualization! <../../_static/ofg.html>`_
+`Open visualization! <../../_static/ofg.html>`__
 
 In this example, an operation with three inputs is defined, which is
 used to build a function that calls this operations twice, each time
@@ -243,7 +259,7 @@ the following example.
 
     d3v.d3viz(f, 'examples/ofg2.html')
 
-`Open visualization! <../../_static/ofg2.html>`_
+`Open visualization! <../../_static/ofg2.html>`__
 
 Feedback
 --------

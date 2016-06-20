@@ -21,12 +21,19 @@ which may be rendered with Sphinx. A rendered version is
 maintained at http://www.deeplearning.net/software/theano/library/
 
 """
+from __future__ import absolute_import, print_function, division
 
 __docformat__ = "restructuredtext en"
 
 # Set a default logger. It is important to do this before importing some other
 # theano code, since this code may want to log some messages.
 import logging
+
+import sys
+
+if sys.platform == 'win32' and sys.version_info[0:2] == (3, 5):
+    raise RuntimeError(
+        "Theano do not support Python 3.5 on Windows. Use Python 2.7 or 3.4.")
 
 theano_logger = logging.getLogger("theano")
 logging_default_handler = logging.StreamHandler()
@@ -36,10 +43,10 @@ logging_default_handler.setFormatter(logging_default_formatter)
 theano_logger.addHandler(logging_default_handler)
 theano_logger.setLevel(logging.WARNING)
 
-from theano.configdefaults import config
-
 # Version information.
 from theano.version import version as __version__
+
+from theano.configdefaults import config
 
 # This is the api version for ops that generate C code.  External ops
 # might need manual changes if this number goes up.  An undefined
@@ -107,11 +114,15 @@ if config.device.startswith('gpu') or config.init_gpu_device.startswith('gpu'):
     if theano.sandbox.cuda.cuda_available:
         import theano.sandbox.cuda.tests.test_driver
 
-        theano.sandbox.cuda.tests.test_driver.test_nvidia_driver1()
+        if config.enable_initial_driver_test:
+            theano.sandbox.cuda.tests.test_driver.test_nvidia_driver1()
 
-if config.device.startswith('cuda') or config.device.startswith('opencl') or \
-        config.gpuarray.init_device != '':
-    import theano.sandbox.gpuarray
+if (config.device.startswith('cuda') or
+        config.device.startswith('opencl') or
+        config.init_gpu_device.startswith('cuda') or
+        config.init_gpu_device.startswith('opencl') or
+        config.contexts != ''):
+    import theano.gpuarray
 
 # Use config.numpy to call numpy.seterr
 import numpy

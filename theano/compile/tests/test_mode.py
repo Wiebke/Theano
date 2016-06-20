@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import theano
 from theano.compile.mode import Mode, AddFeatureOptimizer
 from theano.gof.toolbox import NoOutputFromInplace
@@ -25,3 +26,8 @@ def test_no_output_from_implace():
     fct_opt = theano.function([x, y], b, mode=mode_opt)
     op = fct_opt.maker.fgraph.outputs[0].owner.op
     assert (not hasattr(op, 'destroy_map') or 0 not in op.destroy_map)
+
+
+def test_including():
+    mode = theano.Mode(optimizer='merge')
+    mode.including('fast_compile')

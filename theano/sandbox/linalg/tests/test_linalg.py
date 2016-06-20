@@ -1,10 +1,6 @@
-import unittest
-
+from __future__ import absolute_import, print_function, division
 import numpy
 import numpy.linalg
-from numpy.testing import assert_array_almost_equal
-from numpy.testing import dec, assert_array_equal, assert_allclose
-from numpy import inf
 
 import theano
 from theano import tensor, function
@@ -16,35 +12,17 @@ from theano.tensor.nlinalg import MatrixInverse
 from theano.tensor import DimShuffle
 
 # The one in comment are not tested...
-from theano.sandbox.linalg.ops import (cholesky,
-                                       Cholesky,  # op class
-                                       CholeskyGrad,
+from theano.sandbox.linalg.ops import (Cholesky,  # op class
                                        matrix_inverse,
-                                       pinv,
                                        Solve,
                                        solve,
-                                       diag,
-                                       ExtractDiag,
-                                       extract_diag,
-                                       AllocDiag,
-                                       alloc_diag,
-                                       det,
-                                       svd,
-                                       qr,
                                        # PSD_hint,
-                                       trace,
-                                       matrix_dot,
                                        spectral_radius_bound,
                                        imported_scipy,
-                                       Eig,
                                        inv_as_solve,
-                                       norm
                                        )
 
-from theano.sandbox.linalg import eig, eigh, eigvalsh
-from theano.tests.unittest_tools import attr
 from nose.plugins.skip import SkipTest
-from nose.tools import assert_raises
 
 
 def test_rop_lop():
@@ -156,6 +134,8 @@ def test_transinv_to_invtrans():
 
 
 def test_tag_solve_triangular():
+    if not imported_scipy:
+        raise SkipTest("Scipy needed for the Cholesky op.")
     cholesky_lower = Cholesky(lower=True)
     cholesky_upper = Cholesky(lower=False)
     A = tensor.matrix('A')

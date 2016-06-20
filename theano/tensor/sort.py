@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function, division
 import numpy as np
 import theano
 from theano.tensor.basic import mul, arange
@@ -173,11 +174,7 @@ class ArgSortOp(theano.Op):
     def grad(self, inputs, output_grads):
         # No grad defined for intergers.
         inp, axis = inputs
-        inp_grad = theano.gradient.grad_not_implemented(
-            self, 0, axis,
-            "I'm not sure if argsort should have its gradient"
-            " implemented or is should be marked as undefined."
-            " So I mark it as not implemented for now.")
+        inp_grad = inp.zeros_like()
         axis_grad = theano.gradient.grad_undefined(
             self, 1, axis,
             "argsort is not defined for non-integer axes so"

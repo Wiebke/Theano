@@ -1,5 +1,6 @@
 #!/bin/env python
 # Import smtplib for the actual sending function
+from __future__ import absolute_import, print_function, division
 import smtplib
 import os.path
 import sys
@@ -10,19 +11,17 @@ family=['theano-buildbot@googlegroups.com']
 me='lisa@iro.umontreal.ca'
 
 #Those file contain the output of the do_nightly_build script.
-files=["do_nightly_build_theano", "do_nightly_build_pylearn",
-       "do_nightly_build_deeplearning", "do_nightly_build_pylearn2",
-#       "do_nightly_build_theano_python2.4",
+files=["do_nightly_build_theano",
+       "do_nightly_build_deeplearning",
        "do_nightly_build_theano_python3.3.0",
 ]
-msgs=['Theano buildbot', 'Pylearn buildbot', 'Deep Learning Tutorial buildbot',
-      'Pylearn2 buildbot',
-#      'Theano Python2.4 buildbot',
+msgs=['Theano buildbot',
+      'Deep Learning Tutorial buildbot',
       'Theano Python3.3.0 buildbot']
 
-print 'files', files
-print "msgs", msgs
-print "args", sys.argv
+print('files', files)
+print("msgs", msgs)
+print("args", sys.argv)
 if len(sys.argv) == 3:
     #We send just a file with a message
     files = [sys.argv[1]]
@@ -32,7 +31,7 @@ elif len(sys.argv) == 2:
     files=[os.path.join(sys.argv[1], x) for x in files]
 else:
     files=[os.path.join('/tmp', x) for x in files]
-print 'path', files
+print('path', files)
 
 # Here are the email package modules we'll need
 from email.mime.text import MIMEText
@@ -43,7 +42,7 @@ COMMASPACE = ', '
 def mysend(subject, file):
     # Create the container (outer) email message.
     if not os.path.isfile(file):
-        print "Error: no file",file
+        print("Error: no file", file)
         return
 
     msg = MIMEMultipart()
@@ -53,8 +52,8 @@ def mysend(subject, file):
     
     # Open the files in binary mode.  Let the MIMEImage class automatically
     # guess the specific image type.
-    fp = open(file, 'rb')
-    s=fp.read()
+    with open(file, 'rb') as fp:
+        s=fp.read()
     failures=0
     errors=0
     ran=False
@@ -90,8 +89,8 @@ def mysend(subject, file):
             ran=False
             try: 
                 nb_ran+=int(token)
-            except Exception, e:
-                print e
+            except Exception as e:
+                print(e)
                 
     start = ""
     for line in s.splitlines():
@@ -117,7 +116,6 @@ def mysend(subject, file):
     s = ("Summary of the output:\n\n" + filter_output(open(file)) +
          "\n\nFull output:\n\n" + s)
     img = MIMEText(s)
-    fp.close()
     msg.attach(img)
     
 # Send the email via our own SMTP server.
@@ -126,12 +124,12 @@ def mysend(subject, file):
     else:
         msg['Subject'] = subject+" Fail="+str(failures)+" Err="+str(errors)+" Ran="+str(nb_ran)+" Skip="+str(skip)+" KnownFail="+str(knownfail)
 
-    print msg['Subject']
+    print(msg['Subject'])
     s = smtplib.SMTP()
     s.connect()
     s.sendmail(me, family, msg.as_string())
     s.close()
-    print "Finished sending email for",subject
+    print("Finished sending email for", subject)
 
 for msg, file in zip(msgs, files):
     mysend(msg, file)
